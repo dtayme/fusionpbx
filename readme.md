@@ -1,3 +1,6 @@
+The purpose of this fork is to make fusionPBX more friendly for mariaDB-Galera.
+
+
 What is [FusionPBX](https://www.fusionpbx.com/)?
 --------------------------------------
 
