@@ -17,40 +17,56 @@
 
  The Initial Developer of the Original Code is
  Mark J Crane <markjcrane@fusionpbx.com>
- Portions created by the Initial Developer are Copyright (C) 2008-2014
+ Portions created by the Initial Developer are Copyright (C) 2008-2023
  the Initial Developer. All Rights Reserved.
 
  Contributor(s):
  Mark J Crane <markjcrane@fusionpbx.com>
 */
-require_once "root.php";
-require_once "resources/require.php";
-require_once "resources/check_auth.php";
-if (permission_exists('default_setting_view')) {
-	//access granted
-}
-else {
+
+//includes files
+	require_once dirname(__DIR__, 2) . "/resources/require.php";
+	require_once "resources/check_auth.php";
+
+//check permissions
+if (!permission_exists('default_setting_view')) {
 	echo "access denied";
 	exit;
 }
 
 //add multi-lingual support
-	$language = new text;
-	$text = $language->get();
+$language = new text;
+$text = $language->get();
 
-$search = $_REQUEST['search'];
-$domain_uuid = $_GET['id'];
+//set the variables
+$search = $_REQUEST['search'] ?? '';
+$domain_uuid = $_GET['id'] ?? null;
 
-require "resources/classes/domains.php";
+//reload autoloader
+$autoload->update();
+
+//reload default settings
+settings::clear_cache();
+
+//reset others
+$classes_to_clear = array_filter($autoload->get_interface_list('clear_cache'), function ($class) { return $class !== 'settings'; });
+foreach ($classes_to_clear as $class_name) {
+	$class_name::clear_cache();
+}
+
+//reset domains
 $domain = new domains();
-$domain->db = $db;
 $domain->set();
 
+//add a message
 message::add($text['message-settings_reloaded']);
+
+//redirect the browser
 if (is_uuid($domain_uuid)) {
 	$location = PROJECT_PATH.'/core/domains/domain_edit.php?id='.$domain_uuid;
 }
 else {
+	$search = preg_replace('#[^a-zA-Z0-9_\-\.]# ', '', $search);
 	$location = 'default_settings.php'.($search != '' ? "?search=".$search : null);
 }
 header("Location: ".$location);
