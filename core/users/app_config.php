@@ -268,6 +268,14 @@
 		$apps[$x]['db'][$y]['fields'][$z]['type'] = "text";
 		$apps[$x]['db'][$y]['fields'][$z]['description']['en-us'] = "";
 		$z++;
+		$apps[$x]['db'][$y]['fields'][$z]['name'] = "user_password_reset_hash";
+		$apps[$x]['db'][$y]['fields'][$z]['type'] = "text";
+		$apps[$x]['db'][$y]['fields'][$z]['description']['en-us'] = "SHA-256 hash of the outstanding password reset token. The token itself is only sent in the reset email and is never stored.";
+		$z++;
+		$apps[$x]['db'][$y]['fields'][$z]['name'] = "user_password_reset_expires";
+		$apps[$x]['db'][$y]['fields'][$z]['type'] = "numeric";
+		$apps[$x]['db'][$y]['fields'][$z]['description']['en-us'] = "Unix timestamp after which the outstanding password reset token is no longer accepted.";
+		$z++;
 		$apps[$x]['db'][$y]['fields'][$z]['name'] = "user_type";
 		$apps[$x]['db'][$y]['fields'][$z]['type'] = "text";
 		$apps[$x]['db'][$y]['fields'][$z]['description']['en-us'] = "";

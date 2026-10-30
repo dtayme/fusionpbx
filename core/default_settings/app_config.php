@@ -242,7 +242,7 @@
 		$apps[$x]['default_settings'][$y]['default_setting_name'] = "text";
 		$apps[$x]['default_settings'][$y]['default_setting_value'] = base64_encode(openssl_random_pseudo_bytes(32));
 		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "false";
-		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Display a Reset Password link on the login form (requires smtp_host be defined).";
+		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Enable to display a Reset Password link on the login form (requires smtp_host be defined). Reset links are random single-use tokens stored hashed in the database; this value is only an on/off switch and is not used as an encryption key.";
 		$y++;
 		$apps[$x]['default_settings'][$y]['default_setting_uuid'] = "a21a002c-c065-411c-ae56-3d33a09f64b4";
 		$apps[$x]['default_settings'][$y]['default_setting_category'] = "login";
