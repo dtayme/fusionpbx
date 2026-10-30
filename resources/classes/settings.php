@@ -136,6 +136,9 @@ class settings implements clear_cache {
 				$this->user_settings();
 			}
 
+			//set the theme settings
+			$this->theme_settings();
+
 			//set the device profile settings
 			if (!empty($this->device_profile_uuid)) {
 				$this->device_profile_settings();
@@ -227,6 +230,7 @@ class settings implements clear_cache {
 			$sql = "select * from v_domain_settings ";
 			$sql .= "where domain_uuid = :domain_uuid ";
 			$sql .= "and domain_setting_enabled = true ";
+			$sql .= "order by domain_setting_order asc ";
 			$parameters['domain_uuid'] = $domain_uuid;
 			$result = $this->database->select($sql, $parameters, 'all');
 			//if the apcu extension is available, then store the result
@@ -302,11 +306,67 @@ class settings implements clear_cache {
 						if ($name == "boolean") {
 							$this->settings[$category][$subcategory] = filter_var($row['user_setting_value'], FILTER_VALIDATE_BOOLEAN);
 						} elseif ($name == "array") {
+							if (!isset($this->settings[$category][$subcategory]) || !is_array($this->settings[$category][$subcategory])) {
+								$this->settings[$category][$subcategory] = [];
+							}
 							$this->settings[$category][$subcategory][] = $row['user_setting_value'];
 						} else {
 							$this->settings[$category][$subcategory] = $row['user_setting_value'];
 						}
 
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Update the internal settings array with the theme settings from the database
+	 *
+	 * @access  private
+	 */
+	private function theme_settings() {
+		$theme_uuid = $this->settings['domain']['theme'] ?? '';
+
+		// No theme set
+		if (empty($theme_uuid) || !is_uuid($theme_uuid)) {
+			return;
+		}
+
+		// Get theme settings
+		$sql = "select * from v_theme_settings ";
+		$sql .= "where theme_uuid = (select theme_uuid from v_themes where theme_uuid = :theme_uuid and theme_enabled = 'true') ";
+		$sql .= "order by theme_setting_order asc ";
+		$parameters['theme_uuid'] = $theme_uuid;
+		$result = $this->database->select($sql, $parameters ?? null, 'all');
+		unset($parameters);
+
+		if (!empty($result)) {
+			// Clear array values
+			foreach ($result as $row) {
+				if ($row['theme_setting_enabled'] == true) {
+					if ($row['theme_setting_type'] === 'array' && isset($row['theme_setting_value']) && $row['theme_setting_value'] !== '') {
+						$this->settings['theme'][$row['theme_setting_name']] = [];
+					}
+				}
+			}
+			// Apply theme settings
+			foreach ($result as $row) {
+				if ($row['theme_setting_enabled'] == true) {
+					$type = $row['theme_setting_type'];
+					$category = 'theme';
+					$subcategory = $row['theme_setting_name'];
+					if (isset($row['theme_setting_value']) && $row['theme_setting_value'] !== '') {
+						if ($type == "boolean") {
+							$this->settings[$category][$subcategory] = filter_var($row['theme_setting_value'], FILTER_VALIDATE_BOOLEAN);
+						} elseif ($type == "array") {
+							if (!isset($this->settings[$category][$subcategory]) || !is_array($this->settings[$category][$subcategory])) {
+								$this->settings[$category][$subcategory] = [];
+							}
+							$this->settings[$category][$subcategory][] = $row['theme_setting_value'];
+						} else {
+							$this->settings[$category][$subcategory] = $row['theme_setting_value'];
+						}
 					}
 				}
 			}

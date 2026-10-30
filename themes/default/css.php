@@ -717,6 +717,15 @@ else { //default: white
 			}
 		}
 
+	/* enable hover open in the sm-lg range where the fixed/inline/static
+	   menu bar is already expanded (navbar-expand-sm = 576px) but the
+	   hover rule above (768px) does not apply yet */
+	@media(min-width: 576px) and (max-width: 767.98px) {
+		.navbar .dropdown:hover .dropdown-menu {
+			display: block;
+			}
+		}
+
 	/* sub menu container */
 	ul.navbar-nav > li.nav-item > ul.dropdown-menu {
 		margin-top: 0;
@@ -752,6 +761,62 @@ else { //default: white
 		width: 100%;
 		margin-right: calc(<?=$menu_sub_text_size?> * 2);
 		}
+
+	/* Nested groups share the menu theme in fixed, static, inline and side layouts. */
+	.menu-nested-root, .menu-nested-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.menu-nested-list { padding-inline-start: 14px; }
+	.menu-nested-group > summary {
+		display: list-item;
+		list-style-position: inside;
+		cursor: pointer;
+	}
+	.menu-nested-item > a.nav-link,
+	.menu-nested-group > summary.nav-link {
+		font-family: <?=$menu_sub_text_font?>;
+		font-size: <?=$menu_sub_text_size?>;
+		color: <?=$menu_sub_text_color?>;
+		background: <?=$menu_sub_background_color?>;
+		padding: 3px 14px;
+		white-space: nowrap;
+	}
+	.menu-nested-item > a.nav-link:hover,
+	.menu-nested-item > a.nav-link:focus,
+	.menu-nested-group > summary:hover,
+	.menu-nested-group > summary:focus-visible {
+		color: <?=$menu_sub_text_color_hover?>;
+		background: <?=$menu_sub_background_color_hover?>;
+	}
+	.menu-nested-group > summary:focus-visible {
+		outline: 2px solid currentColor;
+		outline-offset: -2px;
+	}
+	.menu-nested-group > summary.menu_side_item_sub {
+		width: 100%;
+		padding: 5px 20px 5px 45px;
+		font-family: <?=$menu_sub_text_font?>;
+		font-size: <?=$menu_sub_text_size?>;
+		color: <?=$menu_sub_text_color?>;
+		background: <?=$menu_sub_background_color?>;
+	}
+	.menu-nested-group > summary.menu_side_item_sub:hover,
+	.menu-nested-group > summary.menu_side_item_sub:focus-visible {
+		color: <?=$menu_sub_text_color_hover?>;
+		background: <?=$menu_sub_background_color_hover?>;
+	}
+	.menu-nested-label + span { margin-inline-start: 8px; }
+	@media (max-width: 575.98px) {
+		.menu-nested-group > summary.menu_side_item_sub { padding-block: 8px; }
+		ul.navbar-nav > li.nav-item > ul.dropdown-menu.menu-has-nested {
+			position: static;
+			float: none;
+			width: auto;
+		}
+		.menu-nested-item > a.nav-link, .menu-nested-group > summary.nav-link { white-space: normal; }
+	}
 
 	/* sub menu item */
 	ul.navbar-nav > li.nav-item > ul.dropdown-menu > li.nav-item > a.nav-link,
@@ -1138,9 +1203,7 @@ else { //default: white
 		z-index: 6;
 		display: none;
 		position: absolute;
-		<?php if ($menu_style != 'inline') { ?>
-			top: 50px;
-		<?php } ?>
+		/* top: specified in /resources/classes/menu.php */
 		/* right: specified in /resources/classes/menu.php */
 		padding: 15px;
 		background-color: <?=$body_header_background_color?>;
@@ -1158,7 +1221,7 @@ else { //default: white
 	@media (max-width: 575.98px) {
 		div#body_header_user_menu {
 			width: calc(100% - 20px);
-			/* right: specified in /resources/classes/menu.php */
+			right: 10px !important;
 			}
 		}
 
@@ -1663,8 +1726,9 @@ else { //default: white
 		-webkit-transform: translate(-50%, -50%);
 		-khtml-transform: translate(-50%, -50%);
 		transform: translate(-50%, -50%);
-		padding: <?=$login_body_padding?>;
-		width: <?=$login_body_width?>;
+		}
+
+	#default_login_card {
 		background: <?=$login_body_background_color?>;
 		<?php $br = format_border_radius($login_body_border_radius, '4px'); ?>
 		-moz-border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
@@ -1672,6 +1736,8 @@ else { //default: white
 		-khtml-border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
 		border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
 		<?php unset($br); ?>
+		padding: <?=$login_body_padding?>;
+		width: <?=$login_body_width?>;
 		border-style: <?=$login_body_border_style?>;
 		border-width: <?=$login_body_border_size?>;
 		border-color: <?=$login_body_border_color?>;
@@ -1703,6 +1769,28 @@ else { //default: white
 		font-family: <?=$login_text_font?>;
 		text-decoration: none;
 		}
+
+	/*Login page - mobile: widen the card so it nearly fills the screen, leaving a comfortable margin on each side*/
+	@media (max-width: 480px) {
+		#default_login {
+			box-sizing: border-box;
+			width: calc(100vw - 32px);
+		}
+		#default_login .login_body_inner {
+			box-sizing: border-box;
+			width: 100% !important;
+		}
+		#default_login input.txt.login,
+		#default_login select.txt.login {
+			box-sizing: border-box;
+			width: 100% !important;
+			min-width: 0 !important;
+		}
+		#default_login .btn {
+			box-sizing: border-box;
+			width: 100% !important;
+		}
+	}
 
 	<?php
 	//determine body padding & margins (overides on main_content style below) based on menu selection
@@ -2339,6 +2427,7 @@ else { //default: white
 		-khtml-border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
 		border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
 		<?php unset($br); ?>
+		vertical-align: middle;
 		}
 
 	.switch > select {
@@ -2679,10 +2768,11 @@ else { //default: white
 	#message_container {
 		z-index: 99998;
 		position: absolute;
-		top: 0;
+		<?php if ($menu_style == 'fixed') { echo "top: 49px;\n"; } else { echo "top: 0;\n"; } ?>
 		left: 0;
 		right: 0;
 		padding: 0;
+		pointer-events: none;
 		}
 
 	.message_text {
@@ -2696,6 +2786,7 @@ else { //default: white
 		background: <?=$message_default_background_color?>;
 		box-shadow: inset 0px 7px 8px -10px <?=$message_default_color?>;
 		opacity: 0;
+		pointer-events: auto;
 		<?php
 		if ($menu_style == 'side') {
 			echo "padding: 20px;\n";
@@ -2929,7 +3020,6 @@ else { //default: white
 
 	div.card {
 		margin-bottom: 15px;
-		overflow-x: auto;
 		<?php
 		if (isset($card_border_size) || !empty($card_border_color) || !empty($card_background_color) || !empty($card_shadow_color)) {
 			if (isset($card_border_size) && !empty($card_border_color)) {
@@ -2965,6 +3055,7 @@ else { //default: white
 			echo "box-shadow: none;\n";
 		}
 		?>
+		position: initial;
 		}
 
 		div.card:has(.datetimepicker),
@@ -3004,7 +3095,8 @@ else { //default: white
 		border: 1px solid <?=$dashboard_border_color_hover?>;
 		}
 
-	div.widget div.hud_box:first-of-type {
+	div.widget div.hud_box:first-of-type,
+	div.parent_widget div.hud_box:first-of-type {
 		<?php
 		echo "background: ".($dashboard_background_color[0] ?? '#ffffff').";\n";
 		if (!empty($dashboard_background_color) && is_array($dashboard_background_color) && sizeof($dashboard_background_color) > 1) {
@@ -3536,8 +3628,14 @@ else { //default: white
 		float: right;
 		white-space: normal;
 		overflow-wrap: break-word;
-		overflow: hidden;
 		}
+
+	@media (max-width: 575.98px) {
+		div.action_bar > div.actions > *,
+		div.action_bar > div.actions > form > * {
+			margin: 0 2px 0 0 !important;
+		}
+	}
 
 	div.action_bar > div.actions > div.unsaved {
 		display: inline-block;
@@ -3987,6 +4085,273 @@ else { //default: white
 	i.ace_control:hover {
 		opacity: 1.0;
 		}
+
+/* MULTI SELECT DROPDOWN ********************************************************/
+
+	.multiselect_container {
+		position: relative;
+		width: 200px;
+		user-select: none;
+	}
+
+	.selected_values {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		cursor: pointer;
+		font-family: <?=$input_text_font?>;
+		font-size: <?=$input_text_size?>;
+		color: <?=$input_text_color?>;
+		text-align: left;
+		min-height: <?=$input_height?>;
+		min-width: <?=$input_width?>;
+		padding: 4px 6px;
+		margin: 1px;
+		border-width: <?=$input_border_size?>;
+		border-style: <?=$input_border_style?>;
+		border-color: <?=$input_border_color?>;
+		outline-width: <?=$input_outline_size?>;
+		<?php if (!empty($input_outline_style)) { ?>
+			outline-style: <?=$input_outline_style?>;
+		<?php } ?>
+		<?php if (!empty($input_outline_color)) { ?>
+			outline-color: <?=$input_outline_color?>;
+		<?php } ?>
+		background: <?=$input_background_color?>;
+		<?php
+		if (!empty($input_shadow_inner_color)) { $shadows[] = $input_shadow_inner_color; }
+		if (!empty($input_shadow_outer_color)) { $shadows[] = $input_shadow_outer_color; }
+		if (!empty($shadows)) {
+			?>
+			-webkit-box-shadow: <?php echo implode(',', $shadows); ?>;
+			-moz-box-shadow:  <?php echo implode(',', $shadows); ?>;
+			box-shadow:  <?php echo implode(',', $shadows); ?>;
+			<?php
+		}
+		unset($shadows);
+		?>
+		<?php $br = format_border_radius($input_border_radius, '3px'); ?>
+		-moz-border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
+		-webkit-border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
+		-khtml-border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
+		border-radius: <?php echo $br['tl']['n'].$br['tl']['u']; ?> <?php echo $br['tr']['n'].$br['tr']['u']; ?> <?php echo $br['br']['n'].$br['br']['u']; ?> <?php echo $br['bl']['n'].$br['bl']['u']; ?>;
+		<?php unset($br); ?>
+		<?php if (!empty($input_outline_radius)) { ?>
+			outline-radius: <?=$input_outline_radius?>
+		<?php } ?>
+		vertical-align: middle;
+	}
+
+	.selected_values:hover {
+		border-color: <?=$input_border_color_hover?>;
+	}
+
+	.tag {
+		background: #007bff25;
+		color: #007bff;
+		padding: 2px 8px;
+		margin: 2px;
+		border-radius: 15px;
+		font-size: 13px;
+		display: flex;
+		align-items: center;
+	}
+
+	.tag span {
+		margin-left: 5px;
+		cursor: pointer;
+		font-weight: bold;
+		color: #007bff;
+	}
+
+	.tag span:hover {
+		color: #d32f2f;
+	}
+
+	.placeholder_text {
+		color: <?=$input_text_placeholder_color?>;
+	}
+
+	.dropdown_list {
+		display: none;
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		background: <?=$input_background_color?>;
+		border-width: <?=$input_border_size?>;
+		border-style: <?=$input_border_style?>;
+		border-color: <?=$input_border_color?>;
+		border-top: none;
+		border-radius: 0 0 5px 5px;
+		box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+		z-index: 1000;
+		max-height: 300px;
+		overflow-y: auto;
+		box-sizing: border-box;
+		margin: 0 1px;
+	}
+
+	.dropdown_list.open {
+		display: block;
+	}
+
+	.search_box {
+		background-color: <?=$input_background_color?>;
+		color: <?=$input_text_color?>;
+		width: 100%;
+		padding: 10px;
+		border: none;
+		border-bottom: 1px solid #00000010;
+		box-sizing: border-box;
+		font-size: 14px;
+		outline: none;
+	}
+
+	.option_item {
+		display: flex;
+		align-items: center;
+		padding: 10px;
+		cursor: pointer;
+		border-bottom: 1px solid #00000010;
+		margin: 0;
+	}
+
+	.option_item:hover {
+		background-color: <?=$table_row_background_color_hover?>;
+	}
+
+	.option_item input[type="checkbox"] {
+		margin-right: 10px;
+		transform: scale(1.2);
+		cursor: pointer;
+	}
+
+	.no_results {
+		display: none;
+		padding: 15px;
+		text-align: center;
+		color: <?=$input_text_placeholder_color?>;
+	}
+
+/* SEARCHABLE SELECT BOX ********************************************************/
+
+	.searchable_select_wrapper,
+	.domain-search-picker {
+		position: relative;
+		display: inline-block;
+		max-width: 100%;
+	}
+
+	.searchable_select_wrapper input { width: 100%; }
+
+	.searchable_select_wrapper .search_results,
+	.domain-search-results {
+		display: none;
+		position: absolute;
+		left: 0;
+		top: 100%;
+		background: <?=$input_background_color?>;
+		border-width: <?=$input_border_size?>;
+		border-style: <?=$input_border_style?>;
+		border-color: <?=$input_border_color?>;
+		border-radius: 4px;
+		border-top: none;
+		box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+		z-index: 4;
+		min-width: 100%;
+		width: max-content;
+		max-height: 300px;
+		overflow-y: auto;
+		box-sizing: border-box;
+		text-align: left;
+		font-family: <?=$input_text_font?>;
+		font-size: <?=$input_text_size?>;
+		color: <?=$input_text_color?>;
+	}
+
+	.domain-search-results {
+		z-index: 1000;
+	}
+
+	.searchable_select_wrapper .search_result_item,
+	.domain-search-result-item {
+		padding: 6px 0 6px 10px;
+		cursor: pointer;
+		line-height: 1.3;
+		opacity: 0.8;
+	}
+
+	.searchable_select_wrapper .search_result_item:hover,
+	.domain-search-result-item:hover {
+		background-color: <?=$table_row_background_color_hover?>;
+	}
+
+	.searchable_select_wrapper .optgroup_header_row {
+		padding: 4px 10px;
+		font-weight: 700;
+		opacity: 0.8;
+	}
+
+	.searchable_select_wrapper .optgroup_header_row:first-of-type {
+		padding: 6px 10px 4px 10px;
+	}
+
+	.no_results_message,
+	.domain-search-empty {
+		padding: 8px 10px;
+		color: <?=$input_text_placeholder_color?>;
+	}
+
+	.searchable_select_wrapper .actions {
+		position: absolute;
+		top: 0;
+		right: 0;
+		padding: 1px 4px 0 4px;
+		gap: 6px;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		color: <?=$input_text_color?>;
+	}
+
+	.clear_search_button,
+	.domain-search-clear {
+		position: absolute;
+		right: 7px;
+		top: 50%;
+		transform: translateY(-50%);
+		background: none;
+		border: none;
+		cursor: pointer;
+		font-size: 16px;
+		color: <?=$input_text_color?>;
+		opacity: 0.5;
+		padding: 0;
+		line-height: 1;
+		pointer-events: auto;
+		z-index: 2;
+	}
+
+	.clear_search_button:hover {
+		opacity: 0.6;
+	}
+
+	.domain-search-input, .domain-search-picker { max-width: 100%; }
+
+	.searchable_select_wrapper .search_result_name,
+	.domain-search-result-name {
+		display: block;
+	}
+
+	.searchable_select_wrapper .search_result_description,
+	.domain-search-result-description {
+		display: block;
+		opacity: 0.75;
+		font-size: 0.92em;
+		margin-top: 1px;
+	}
 
 <?php
 

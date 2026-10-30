@@ -53,6 +53,7 @@
 				$gateway = $row["gateway"];
 				$username = $row["username"];
 				$password = $row["password"];
+				$distinct_to = !empty($row["distinct_to"]) ? 'true' : 'false';
 				$auth_username = $row["auth_username"];
 				$realm = $row["realm"];
 				$from_user = $row["from_user"];
@@ -61,7 +62,7 @@
 				$register_proxy = $row["register_proxy"];
 				$outbound_proxy = $row["outbound_proxy"];
 				$expire_seconds = $row["expire_seconds"];
-				$register = $row["register"] ?? false;
+				$register = !empty($row["register"]) ? 'true' : 'false';
 				$register_transport = $row["register_transport"];
 				$contact_params = $row["contact_params"];
 				$retry_seconds = $row["retry_seconds"];
@@ -70,10 +71,10 @@
 				$ping = $row["ping"];
 				$ping_min = $row["ping_min"];
 				$ping_max = $row["ping_max"];
-				$contact_in_ping = $row["contact_in_ping"] ?? false;
+				$contact_in_ping = !empty($row["contact_in_ping"]) ? 'true' : 'false';
 				// $channels = $row["channels"];
-				$caller_id_in_from = $row["caller_id_in_from"] ?? false;
-				$supress_cng = $row["supress_cng"] ?? false;
+				$caller_id_in_from = !empty($row["caller_id_in_from"]) ? 'true' : 'false';
+				$supress_cng = !empty($row["supress_cng"]) ? 'true' : 'false';
 				$sip_cid_type = $row["sip_cid_type"];
 				$extension_in_contact = $row["extension_in_contact"];
 				$effective_caller_id_name = $row["effective_caller_id_name"];
@@ -82,7 +83,7 @@
 				$outbound_caller_id_number = $row["outbound_caller_id_number"];
 				$context = $row["context"];
 				$profile = $row["profile"];
-				$enabled = $row["enabled"] ?? false;
+				$enabled = !empty($row["enabled"]) ? 'true' : 'false';
 				$description = $row["description"]." (".$text['label-copy'].")";
 			}
 			unset($sql, $parameters, $row);
@@ -102,6 +103,7 @@
 			$array['gateways'][0]['gateway'] = $gateway;
 			$array['gateways'][0]['username'] = $username;
 			$array['gateways'][0]['password'] = $password;
+			$array['gateways'][0]['distinct_to'] = $distinct_to;
 			$array['gateways'][0]['auth_username'] = $auth_username;
 			$array['gateways'][0]['realm'] = $realm;
 			$array['gateways'][0]['from_user'] = $from_user;
@@ -134,7 +136,7 @@
 			unset($array);
 
 		//add new gateway to session variable
-			if ($enabled == true) {
+			if (!empty($enabled)) {
 				$_SESSION['gateways'][$gateway_uuid] = $gateway;
 			}
 
@@ -149,8 +151,34 @@
 			message::add($text['message-copy']);
 	}
 
+// Set variables from http GET parameters
+	$page = is_numeric($_GET['page'] ?? '') ? $_GET['page'] : 0;
+	$order_by = preg_replace('#[^a-zA-Z0-9_\-]#', '', $_GET['order_by'] ?? '');
+	$order = ($_GET['order'] ?? '') === 'desc' ? 'desc' : 'asc';
+	$search = $_GET['search'] ?? '';
+	$show = $_GET['show'] ?? '';
+
+// Build the query string
+	$url_params = [];
+	if (!empty($page)) {
+		$url_params['page'] = $page;
+	}
+	if (!empty($_GET['order_by'])) {
+		$url_params['order_by'] = $order_by;
+	}
+	if (!empty($_GET['order'])) {
+		$url_params['order'] = $order;
+	}
+	if (!empty($search)) {
+		$url_params['search'] = $search;
+	}
+	if (!empty($show) && $show == 'all' && permission_exists('gateway_all')) {
+		$url_params['show'] = $show;
+	}
+	$query_string = http_build_query($url_params);
+
 //redirect the user
-	header("Location: gateways.php");
+	header("Location: gateways.php".($query_string ? '?'.$query_string : ''));
 	return;
 
 ?>

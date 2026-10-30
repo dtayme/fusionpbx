@@ -127,6 +127,9 @@ class install {
 		$conf .= "php.dir = " . $php_dir . "\n";
 		$conf .= "php.bin = php\n";
 		$conf .= "\n";
+		$conf .= "#security settings\n";
+		$conf .= "security.header.content_security_policy.frame_ancestors\n";
+		$conf .= "\n";
 		$conf .= "#session settings\n";
 		$conf .= "session.cookie_httponly = true\n";
 		$conf .= "session.cookie_secure = true\n";
@@ -161,6 +164,9 @@ class install {
 		}
 		fwrite($file_handle, $conf);
 		fclose($file_handle);
+
+		//restrict the config file permissions
+		@chmod($config_file, 0640);
 
 		//if the config.conf file was saved return true
 		if (file_exists($config_file)) {

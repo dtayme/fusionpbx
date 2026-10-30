@@ -284,25 +284,25 @@ function save_var_xml() {
 		return false;
 	}
 
-	//open the vars.xml file
-	$fout = fopen($switch_conf_dir."/vars.xml","w");
+	//skip if the directory doesn't exist
+	if (!file_exists($switch_conf_dir)) {
+		return false;
+	}
 
-	//get the hostname
-	$hostname = trim(event_socket_request_cmd('api switchname'));
-	if (empty($hostname)) {
-		$hostname = trim(gethostname());
-	}
-	if (empty($hostname)) {
-		return;
-	}
+	//get the server hostname
+	$hostname = gethostname();
+
+	//preset the variables
+	$prev_var_category = '';
+	$xml = '';
 
 	//build the xml
 	$sql = "select * from v_vars ";
 	$sql .= "where var_enabled = true ";
+	$sql .= "and (var_hostname is null or var_hostname = :hostname) ";
 	$sql .= "order by var_category, var_order asc ";
-	$variables = $database->select($sql, null, 'all');
-	$prev_var_category = '';
-	$xml = '';
+	$parameters['hostname'] = $hostname;
+	$variables = $database->select($sql, $parameters, 'all');
 	if (!empty($variables)) {
 		foreach ($variables as $row) {
 			if ($row['var_category'] != 'Provision') {
@@ -311,27 +311,30 @@ function save_var_xml() {
 				}
 				if (empty($row['var_command'])) { $row['var_command'] = 'set'; }
 				if ($row['var_category'] == 'Exec-Set') { $row['var_command'] = 'exec-set'; }
-				if (empty($row['var_hostname'])) {
-					$xml .= "<X-PRE-PROCESS cmd=\"".$row['var_command']."\" data=\"".$row['var_name']."=".$row['var_value']."\" />\n";
-				} elseif ($row['var_hostname'] == $hostname) {
-					$xml .= "<X-PRE-PROCESS cmd=\"".$row['var_command']."\" data=\"".$row['var_name']."=".$row['var_value']."\" />\n";
-				}
+				$xml .= "<X-PRE-PROCESS cmd=\"".$row['var_command']."\" data=\"".$row['var_name']."=".$row['var_value']."\" />\n";
 			}
 			$prev_var_category = $row['var_category'];
 		}
 	}
 	$xml .= "\n";
-	fwrite($fout, $xml);
-	unset($sql, $variables, $xml);
-	fclose($fout);
+	unset($sql, $variables);
+
+	//write the file to the file system if it fails show the error
+	if (file_put_contents($switch_conf_dir."/vars.xml", $xml) === false) {
+		$last_error_message = error_get_last()['message'] ?? 'Failed to write to file';
+		$last_error_file = error_get_last()['file'] ?? '';
+		$last_error_line = error_get_last()['line'] ?? '';
+		if (is_cli()) {
+			echo "Error: " . $last_error_file . " (line " . $last_error_line . "): " . $last_error_message . "\n";
+			return;
+		}
+		else {
+			message::add($last_error_file . " (line " . $last_error_line . "): " . $last_error_message, 'negative');
+		}
+	}
 
 	//apply settings
 	$_SESSION["reload_xml"] = true;
-
-	//$cmd = "api reloadxml";
-	//event_socket_request_cmd($cmd);
-	//unset($cmd);
-
 }
 
 /**
@@ -390,7 +393,7 @@ function outbound_route_to_bridge($domain_uuid, $destination_number, array $chan
 	$sql .= "and dd.dialplan_detail_type not in ('set', 'unset', 'export', 'limit', '\${user_exists}') ";
 	$sql .= "and d.dialplan_enabled = true ";
 	$sql .= "and (dd.dialplan_detail_enabled = true or dd.dialplan_detail_enabled is null) ";
-	$sql .= "order by d.domain_uuid, d.dialplan_uuid, d.dialplan_order, dd.dialplan_detail_order ";
+	$sql .= "order by d.domain_uuid, d.dialplan_order, d.dialplan_uuid, dd.dialplan_detail_order ";
 	$parameters['hostname'] = $hostname;
 	$result = $database->select($sql, $parameters, 'all');
 	unset($sql, $parameters);
@@ -882,49 +885,21 @@ if (!function_exists('switch_conf_xml')) {
 			}
 			$file_contents = file_get_contents($path."/autoload_configs/switch.conf.xml");
 
-		//prepare the php variables
-			if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-				$php_bin = win_find_php('php.exe');
-				if (!$php_bin) { // relay on system path
-					$php_bin = 'php.exe';
-				}
-
-				$secure_path = path_join(dirname(__DIR__, 1), PROJECT_PATH, 'secure');
-
-				$v_mail_bat = path_join($secure_path, 'mailto.bat');
-				$v_mail_cmd = '@' .
-					'"' . str_replace('/', '\\', $php_bin) . '" ' .
-					'"' . str_replace('/', '\\', path_join($secure_path, 'v_mailto.php')) . '" ';
-
-				$fout = fopen($v_mail_bat, "w+");
-				fwrite($fout, $v_mail_cmd);
-				fclose($fout);
-
-				$v_mailer_app = '"' .  str_replace('/', '\\', $v_mail_bat) . '"';
-				$v_mailer_app_args = "";
-				unset($v_mail_bat, $v_mail_cmd, $secure_path, $php_bin, $fout);
-			}
-			else {
-				if (file_exists(PHP_BINDIR.'/php')) { define("PHP_BIN", "php"); }
-				$v_mailer_app = PHP_BINDIR."/".PHP_BIN." ".dirname(__DIR__, 1)."/secure/v_mailto.php";
-				$v_mailer_app_args = "-t";
-			}
+		//replace the values in the template
+			// $file_contents = str_replace("{mailer_app}", $mailer_app, $file_contents);
+			// unset ($v_mailer_app);
 
 		//replace the values in the template
-			$file_contents = str_replace("{v_mailer_app}", $v_mailer_app, $file_contents);
-			unset ($v_mailer_app);
-
-		//replace the values in the template
-			$file_contents = str_replace("{v_mailer_app_args}", $v_mailer_app_args, $file_contents);
-			unset ($v_mailer_app_args);
+			// $file_contents = str_replace("{mailer_app_args}", $v_mailer_app_args, $file_contents);
+			// unset ($v_mailer_app_args);
 
 		//write the XML config file
-			$fout = fopen($settings->get('switch', 'conf')."/autoload_configs/switch.conf.xml","w");
-			fwrite($fout, $file_contents);
-			fclose($fout);
+			// $fout = fopen($settings->get('switch', 'conf')."/autoload_configs/switch.conf.xml","w");
+			// fwrite($fout, $file_contents);
+			// fclose($fout);
 
 		//apply settings
-			$_SESSION["reload_xml"] = true;
+			// $_SESSION["reload_xml"] = true;
 	}
 }
 
@@ -1281,6 +1256,51 @@ function force_close_port(string $port): void {
 			exec("gdb -p {$pid} -batch 'call close({$id})' -batch 'quit'");
 		}
 	}
+}
+
+/**
+ * Validates a caller ID number against a caller ID number format pattern.
+ *
+ * Format pattern characters:
+ * - N (or n)   : matches a digit 1-9
+ * - X (or x)   : matches a digit 0-9
+ * - 0-9        : literal digit that must match exactly
+ * - any other  : literal character that must match exactly (e.g. +, -, ., space)
+ *
+ * An empty format string is considered valid for any value.
+ *
+ * @param string $value  The caller ID number to validate.
+ * @param string $format The format pattern to validate against.
+ *
+ * @return bool True if the value matches the format pattern, false otherwise.
+ *
+ * @example
+ * caller_id_number_format_valid('5551234567', 'NNNNNNNNNN'); // true
+ * caller_id_number_format_valid('+15551234567', '+NXXXXXXXXX'); // true
+ * caller_id_number_format_valid('0123456789', 'NXXXXXXXXX'); // false (0 is not 1-9)
+ * caller_id_number_format_valid('5551234567', ''); // true (empty format is always valid)
+ */
+function caller_id_number_format_valid(string $value, string $format): bool {
+	if ($format === '') {
+		return true;
+	}
+	$format = strtoupper($format);
+	$regex = '^';
+	$format_len = strlen($format);
+	for ($i = 0; $i < $format_len; $i++) {
+		$char = $format[$i];
+		if ($char === 'N') {
+			$regex .= '[1-9]';
+		} elseif ($char === 'X') {
+			$regex .= '[0-9]';
+		} elseif (ctype_digit($char)) {
+			$regex .= $char;
+		} else {
+			$regex .= preg_quote($char, '/');
+		}
+	}
+	$regex .= '$';
+	return (bool)preg_match('/' . $regex . '/', $value);
 }
 
 ?>

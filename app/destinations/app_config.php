@@ -48,27 +48,33 @@
 		$apps[$x]['destinations'][$y]['select_label'] = "\${destination_number} \${destination_description}";
 		$y++;
 		$apps[$x]['destinations'][$y]['type'] = 'array';
-		$apps[$x]['destinations'][$y]['label'] = 'other';
+		$apps[$x]['destinations'][$y]['label'] = 'dialplans';
 		$apps[$x]['destinations'][$y]['name'] = 'dialplans';
 		$apps[$x]['destinations'][$y]['field']['name']  = 'name';
 		$apps[$x]['destinations'][$y]['field']['destination'] = 'destination';
 		$apps[$x]['destinations'][$y]['select_value']['dialplan'] = "transfer:\${destination}";
 		$apps[$x]['destinations'][$y]['select_value']['ivr'] = "menu-exec-app:transfer \${destination}";
 		$apps[$x]['destinations'][$y]['select_label'] = "\${name}";
-		/*
 		$z=0;
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['label'] = 'check_voicemail';
 		$apps[$x]['destinations'][$y]['result']['data'][$z]['name'] = 'check_voicemail';
 		$apps[$x]['destinations'][$y]['result']['data'][$z]['destination'] = '*98 XML ${context}';
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['extension'] = '*98';
 		$z++;
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['label'] = 'company_directory';
 		$apps[$x]['destinations'][$y]['result']['data'][$z]['name'] = 'company_directory';
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['extension'] = '*411';
 		$apps[$x]['destinations'][$y]['result']['data'][$z]['destination'] = '*411 XML ${context}';
 		$z++;
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['label'] = 'hangup';
 		$apps[$x]['destinations'][$y]['result']['data'][$z]['name'] = 'hangup';
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['extension'] = '';
 		$apps[$x]['destinations'][$y]['result']['data'][$z]['destination'] = 'hangup';
 		$z++;
-		$apps[$x]['destinations'][$y]['result']['data'][$z]['name'] = 'company_directory';
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['label'] = 'record';
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['name'] = 'record';
+		$apps[$x]['destinations'][$y]['result']['data'][$z]['extension'] = '*732';
 		$apps[$x]['destinations'][$y]['result']['data'][$z]['destination'] = '*732 XML ${context}';
-		*/
 
 	//permission details
 		$y=0;
@@ -217,6 +223,30 @@
 		$apps[$x]['default_settings'][$y]['default_setting_value'] = "default";
 		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "true";
 		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Options: default, dynamic";
+		$y++;
+		$apps[$x]['default_settings'][$y]['default_setting_uuid'] = "e5a6b7c8-d9e0-4f1a-8b2c-3d4e5f6a7b8c";
+		$apps[$x]['default_settings'][$y]['default_setting_category'] = "destinations";
+		$apps[$x]['default_settings'][$y]['default_setting_subcategory'] = "required_fields";
+		$apps[$x]['default_settings'][$y]['default_setting_name'] = "array";
+		$apps[$x]['default_settings'][$y]['default_setting_value'] = "destination_caller_id_name";
+		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "false";
+		$apps[$x]['default_settings'][$y]['default_setting_description'] = "List of destination fields that are required. Valid Options: destination_caller_id_name, destination_caller_id_number.";
+		$y++;
+		$apps[$x]['default_settings'][$y]['default_setting_uuid'] = "f6b7c8d9-e0f1-4a2b-9c3d-4e5f6a7b8c9d";
+		$apps[$x]['default_settings'][$y]['default_setting_category'] = "destinations";
+		$apps[$x]['default_settings'][$y]['default_setting_subcategory'] = "required_fields";
+		$apps[$x]['default_settings'][$y]['default_setting_name'] = "array";
+		$apps[$x]['default_settings'][$y]['default_setting_value'] = "destination_caller_id_number";
+		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "false";
+		$apps[$x]['default_settings'][$y]['default_setting_description'] = "List of destination fields that are required. Valid Options: destination_caller_id_name, destination_caller_id_number.";
+		$y++;
+		$apps[$x]['default_settings'][$y]['default_setting_uuid'] = "a7c8d9e0-f1a2-4b3c-8d4e-5f6a7b8c9d0e";
+		$apps[$x]['default_settings'][$y]['default_setting_category'] = "destinations";
+		$apps[$x]['default_settings'][$y]['default_setting_subcategory'] = "caller_id_number_format";
+		$apps[$x]['default_settings'][$y]['default_setting_name'] = "text";
+		$apps[$x]['default_settings'][$y]['default_setting_value'] = "+1NXXNXXXXXX";
+		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "false";
+		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Format for the destination caller ID number. Allowed characters: N (digit 1-9), X (digit 0-9), + (E.164), digits 0-9 (literal). N and X may be lower case.";
 		$y++;
 
 	//cache details

@@ -1,6 +1,6 @@
 <?php
 /*
-	Copyright (C) 2022-2023 Mark J Crane <markjcrane@fusionpbx.com>
+	Copyright (C) 2022-2026 Mark J Crane <markjcrane@fusionpbx.com>
 	Redistribution and use in source and binary forms, with or without
 	modification, are permitted provided that the following conditions are met:
 	1. Redistributions of source code must retain the above copyright notice,
@@ -34,6 +34,32 @@
 	$language = new text;
 	$text = $language->get();
 
+// Set variables from http GET parameters
+	$page = is_numeric($_GET['page'] ?? '') ? $_GET['page'] : 0;
+	$order_by = preg_replace('#[^a-zA-Z0-9_\-]#', '', $_GET['order_by'] ?? '');
+	$order = ($_GET['order'] ?? '') === 'asc' ? 'asc' : 'desc';
+	$search = $_GET['search'] ?? '';
+	$filter = $_GET['filter'] ?? '';
+
+// Build the query string
+	$param = [];
+	if (!empty($page)) {
+		$param['page'] = $page;
+	}
+	if (!empty($_GET['order_by'])) {
+		$param['order_by'] = $order_by;
+	}
+	if (!empty($_GET['order'])) {
+		$param['order'] = $order;
+	}
+	if (!empty($search)) {
+		$param['search'] = $search;
+	}
+	if (!empty($filter)) {
+		$param['filter'] = $filter;
+	}
+	$query_string = http_build_query($param);
+
 //action add or update
 	if (is_uuid($_REQUEST["id"])) {
 		$action = "update";
@@ -45,14 +71,20 @@
 	}
 
 //get http post variables and set them to php variables
+	$hostname = '';
+	$log_date = '';
+	$ip_address = '';
+	$extension = '';
+	$user_agent = '';
+	$log_status = '';
 	if (!empty($_POST) && is_array($_POST)) {
-		$hostname = $_POST["hostname"];
-		$log_date = $_POST["log_date"];
-		$filter = $_POST["filter"];
-		$ip_address = $_POST["ip_address"];
-		$extension = $_POST["extension"];
-		$user_agent = $_POST["user_agent"];
-		$log_status = $_POST["log_status"];
+		$hostname = $_POST["hostname"] ?? '';
+		$log_date = $_POST["log_date"] ?? '';
+		$filter = $_POST["filter"] ?? '';
+		$ip_address = $_POST["ip_address"] ?? '';
+		$extension = $_POST["extension"] ?? '';
+		$user_agent = $_POST["user_agent"] ?? '';
+		$log_status = $_POST["log_status"] ?? '';
 	}
 
 //process the user data and save it to the database
@@ -62,36 +94,32 @@
 			$token = new token;
 			if (!$token->validate($_SERVER['PHP_SELF'])) {
 				message::add($text['message-invalid_token'],'negative');
-				header('Location: event_guard_logs.php');
+				header('Location: event_guard_logs.php'.($query_string ? '?'.$query_string : ''));
 				exit;
 			}
 
 		//process the http post data by submitted action
 			if (!empty($_POST['action'])) {
 
-				//prepare the array(s)
+				//prepare the array
+				$event_guard_logs[0]['event_guard_log_uuid'] = $_POST["event_guard_log_uuid"] ?? '';
+				$event_guard_logs[0]['checked'] = 'true';
+
 				//send the array to the database class
+				$obj = new event_guard;
 				switch ($_POST['action']) {
 					case 'copy':
-						if (permission_exists('event_guard_log_add')) {
-							$database->copy($array);
-						}
+						$obj->copy($event_guard_logs);
 						break;
 					case 'delete':
-						if (permission_exists('event_guard_log_delete')) {
-							$database->delete($array);
-						}
-						break;
-					case 'toggle':
-						if (permission_exists('event_guard_log_update')) {
-							$database->toggle($array);
-						}
+						$obj->unblock($event_guard_logs);
 						break;
 				}
 
 				//redirect the user
-				if (in_array($_POST['action'], array('copy', 'delete', 'toggle'))) {
-					header('Location: event_guard_log_edit.php?id='.$id);
+				if (in_array($_POST['action'], array('copy', 'delete'))) {
+					$redirect_uuid = isset($id) ? $id : ($_POST["event_guard_log_uuid"] ?? '');
+					header('Location: event_guard_log_edit.php?id=' . urlencode($redirect_uuid) . ($query_string ? '&' . $query_string : ''));
 					exit;
 				}
 			}
@@ -99,7 +127,7 @@
 		//check for all required data
 			$msg = '';
 			if (empty($hostname)) { $msg .= $text['message-required']." ".$text['label-hostname']."<br>\n"; }
-			if (empty($log_date)) { $msg .= $text['message-required']." ".$text['label-log_date']."<br>\n"; }
+			if (empty($log_date) || strtotime($log_date) === false) { $msg .= $text['message-required']." ".$text['label-log_date']."<br>\n"; }
 			if (empty($filter)) { $msg .= $text['message-required']." ".$text['label-filter']."<br>\n"; }
 			if (empty($ip_address)) { $msg .= $text['message-required']." ".$text['label-ip_address']."<br>\n"; }
 			if (empty($extension)) { $msg .= $text['message-required']." ".$text['label-extension']."<br>\n"; }
@@ -145,7 +173,7 @@
 					$_SESSION["message"] = $text['message-update'];
 				}
 				//header('Location: event_guard_logs.php');
-				header('Location: event_guard_log_edit.php?id='.urlencode($event_guard_log_uuid));
+				header('Location: event_guard_log_edit.php?id='.urlencode($event_guard_log_uuid).($query_string ? '&'.$query_string : ''));
 				return;
 			}
 	}
@@ -192,12 +220,9 @@
 	echo "<div class='action_bar' id='action_bar'>\n";
 	echo "	<div class='heading'><b>".$text['title-event_guard_log']."</b></div>\n";
 	echo "	<div class='actions'>\n";
-	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back'),'id'=>'btn_back','collapse'=>'hide-xs','style'=>'margin-right: 15px;','link'=>'event_guard_logs.php']);
+	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back'),'id'=>'btn_back','collapse'=>'hide-xs','style'=>'margin-right: 15px;','link'=>'event_guard_logs.php'.($query_string ? '?'.$query_string : '')]);
 	if ($action == 'update') {
-		if (permission_exists('_add')) {
-			echo button::create(['type'=>'button','label'=>$text['button-copy'],'icon'=>$settings->get('theme', 'button_icon_copy'),'id'=>'btn_copy','name'=>'btn_copy','style'=>'display: none;','onclick'=>"modal_open('modal-copy','btn_copy');"]);
-		}
-		if (permission_exists('_delete')) {
+		if (permission_exists('event_guard_log_delete')) {
 			echo button::create(['type'=>'button','label'=>$text['button-delete'],'icon'=>$settings->get('theme', 'button_icon_delete'),'id'=>'btn_delete','name'=>'btn_delete','style'=>'display: none; margin-right: 15px;','onclick'=>"modal_open('modal-delete','btn_delete');"]);
 		}
 	}
@@ -286,7 +311,6 @@
 	echo $text['description-user_agent']."\n";
 	echo "</td>\n";
 	echo "</tr>\n";
-
 
 	echo "<tr>\n";
 	echo "<td class='vncellreq' valign='top' align='left' nowrap='nowrap'>\n";

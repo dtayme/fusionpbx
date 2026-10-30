@@ -59,7 +59,7 @@
 	local hex_to_char = function(x)
 		return string.char(tonumber(x, 16))
 	end
-	
+
 	--define url_decode function
 	local url_decode = function(url)
 		return url:gsub("%%(%x%x)", hex_to_char)
@@ -87,6 +87,7 @@
 				or session:getVariable("originate_disposition") == "failure"
 				or session:getVariable("originate_disposition") == "ORIGINATOR_CANCEL"
 				or session:getVariable("originate_disposition") == "UNALLOCATED_NUMBER"
+				or session:getVariable("originate_disposition") == "CALL_REJECTED"
 			) then
 				--set the status
 					status = 'missed'
@@ -108,6 +109,111 @@
 			event:addHeader("caller_id_number", caller_id_number);
 			event:fire();
 
+	end
+
+--check the missed calls
+	function missed()
+		--only run the missed call handling once per call
+			if (missed_sent == true) then
+				return;
+			end
+			missed_sent = true;
+
+		--add missed call channel variable
+			if (session and session:ready()) then
+				session:setVariable("missed_call", 'true');
+			end
+
+		--send missed call email
+		if (missed_call_app ~= nil and missed_call_data ~= nil) then
+			if (missed_call_app == "email") then
+				--prepare the email address
+					mail_to = missed_call_data;
+
+				--set the sounds path for the language, dialect and voice
+					if (session and session:ready()) then
+						default_language = session:getVariable("default_language");
+						default_dialect = session:getVariable("default_dialect");
+						default_voice = session:getVariable("default_voice");
+					end
+					if (not default_language) then default_language = 'en'; end
+					if (not default_dialect) then default_dialect = 'us'; end
+					if (not default_voice) then default_voice = 'callie'; end
+
+				--predefine the variables
+					subject = '';
+					body = '';
+
+				--get the templates
+					local sql = "SELECT * FROM v_email_templates ";
+					sql = sql .. "WHERE (domain_uuid = :domain_uuid or domain_uuid is null) ";
+					sql = sql .. "AND template_language = :template_language ";
+					sql = sql .. "AND template_category = 'missed' ";
+					sql = sql .. "AND template_enabled = true ";
+					sql = sql .. "ORDER BY domain_uuid DESC ";
+					local params = {domain_uuid = domain_uuid, template_language = default_language.."-"..default_dialect};
+					if (debug["sql"]) then
+						freeswitch.consoleLog("notice", "[voicemail] SQL: " .. sql .. "; params:" .. json.encode(params) .. "\n");
+					end
+					dbh = Database.new('system');
+					dbh:query(sql, params, function(row)
+						subject = row["template_subject"];
+						body = row["template_body"];
+					end);
+
+				--prepare the headers
+					local headers = {
+						["X-FusionPBX-Domain-UUID"] = domain_uuid;
+						["X-FusionPBX-Domain-Name"] = domain_name;
+						["X-FusionPBX-Call-UUID"]   = uuid;
+						["X-FusionPBX-Email-Type"]  = 'missed';
+					}
+
+				--remove quotes from caller id name and number
+					caller_id_name = caller_id_name:gsub("'", "&#39;");
+					caller_id_name = caller_id_name:gsub([["]], "&#34;");
+					caller_id_number = caller_id_number:gsub("'", "&#39;");
+					caller_id_number = caller_id_number:gsub([["]], "&#34;");
+
+				--prepare the subject
+					subject = subject:gsub("${caller_id_name}", caller_id_name);
+					subject = subject:gsub("${caller_id_number}", caller_id_number);
+					subject = subject:gsub("${ring_group_name}", ring_group_name);
+					subject = subject:gsub("${ring_group_extension}", ring_group_extension);
+					subject = subject:gsub("${sip_to_user}", ring_group_name);
+					subject = subject:gsub("${dialed_user}", ring_group_extension);
+					subject = subject:gsub("${destination_number}", destination_number);
+					subject = trim(subject);
+					subject = '=?utf-8?B?'..base64.encode(subject)..'?=';
+
+				--prepare the body
+					body = body:gsub("${caller_id_name}", caller_id_name);
+					body = body:gsub("${caller_id_number}", caller_id_number);
+					body = body:gsub("${ring_group_name}", ring_group_name);
+					body = body:gsub("${ring_group_extension}", ring_group_extension);
+					body = body:gsub("${sip_to_user}", ring_group_name);
+					body = body:gsub("${dialed_user}", ring_group_extension);
+					body = body:gsub("${destination_number}", destination_number);
+					body = body:gsub(" ", "&nbsp;");
+					body = body:gsub("%s+", "");
+					body = body:gsub("&nbsp;", " ");
+					body = body:gsub("\n", "");
+					body = body:gsub("\n", "");
+					body = trim(body);
+
+				--send the email
+					send_mail(headers,
+						nil,
+						mail_to,
+						{subject, body}
+					);
+
+				--send the debug info
+					if (debug["info"]) then
+						freeswitch.consoleLog("notice", "[missed call]: "..mail_to.." '"..subject.."' '"..body.."'\n");
+					end
+			end
+		end
 	end
 
 --define iterator function to iterate over key/value pairs in string
@@ -152,6 +258,8 @@
 	if (session:ready()) then
 		session:setAutoHangup(false);
 		ring_group_uuid = session:getVariable("ring_group_uuid");
+		domain_uuid = session:getVariable("domain_uuid");
+		domain_name = session:getVariable("domain_name");
 		recordings_dir = session:getVariable("recordings_dir");
 		sounds_dir = session:getVariable("sounds_dir");
 		username = session:getVariable("username");
@@ -249,7 +357,9 @@
 	sql = sql .. "cast(r.ring_group_call_forward_enabled as text), ";
 	sql = sql .. "cast(r.ring_group_follow_me_enabled as text), ";
 	sql = sql .. "r.ring_group_missed_call_app, ";
-	sql = sql .. "r.ring_group_missed_call_data ";
+	sql = sql .. "r.ring_group_missed_call_data, ";
+	sql = sql .. "r.ring_group_wait_announcement, ";
+	sql = sql .. "r.ring_group_wait_interval ";
 	sql = sql .. "FROM v_ring_groups as r, v_domains as d ";
 	sql = sql .. "WHERE r.ring_group_uuid = :ring_group_uuid ";
 	sql = sql .. "AND r.domain_uuid = d.domain_uuid ";
@@ -276,11 +386,16 @@
 		ring_group_follow_me_enabled = row["ring_group_follow_me_enabled"];
 		missed_call_app = row["ring_group_missed_call_app"];
 		missed_call_data = row["ring_group_missed_call_data"];
+		ring_group_wait_announcement = row["ring_group_wait_announcement"];
+		ring_group_wait_interval = row["ring_group_wait_interval"];
 	end);
 
 --create the settings object
 	local Settings = require "resources.functions.lazy_settings";
 	local settings = Settings.new(dbh, domain_name, domain_uuid);
+
+--get the bridge type for external numbers (loopback or bridge)
+	external_route = settings:get('ring_group', 'external_route', 'text') or 'loopback';
 
 --get the recordings dir
 	--recordings_dir = settings:get('switch', 'recordings', 'dir');
@@ -322,13 +437,10 @@
 	end
 
 --set exit key action
-	if (ring_group_timeout_app and ring_group_timeout_data) then
-		if (ring_group_exit_key) then
-			--use the user defined exit key
-			session:execute("bind_digit_action", "exit_key,"..ring_group_exit_key..",exec:"..ring_group_timeout_app..","..ring_group_timeout_data..",both,self");
-		else
-			--use a default exit key of 9
-			session:execute("bind_digit_action", "exit_key,9,exec:"..ring_group_timeout_app..","..ring_group_timeout_data..",both,self");
+	if (ring_group_timeout_app and #ring_group_timeout_app > 0 and ring_group_timeout_data and #ring_group_timeout_data > 0) then
+		if (ring_group_exit_key ~= nil and #ring_group_exit_key > 0) then
+			--use the user defined or default exit key
+			session:execute("bind_digit_action", "local,"..ring_group_exit_key..",exec:"..ring_group_timeout_app..","..ring_group_timeout_data..",both,self");
 		end
 	end
 
@@ -343,6 +455,24 @@
 		else
 			session_answer = false
 		end
+	end
+
+--answer the call if not answered and there is wait announcement
+	if (ring_group_wait_announcement and #ring_group_wait_announcement > 0 and not session_answer) then
+		session:answer();
+		session_answer = true;
+	end
+
+--schedule wait announcements
+	if (ring_group_wait_announcement and #ring_group_wait_announcement > 0) then
+		local interval = ring_group_wait_interval or 30;
+		session:setVariable("ring_group_wait_announcement", ring_group_wait_announcement);
+		session:setVariable("ring_group_wait_interval", tostring(interval));
+		session:setVariable("ring_group_wait_domain_name", domain_name);
+		session:setVariable("ring_group_wait_domain_uuid", domain_uuid);
+		local wait_announcement_script = scripts_dir:gsub('\\','/') .. "/app/ring_groups/resources/scripts/wait_announcement.lua";
+		local command = "sched_api +" .. interval .. " " .. uuid .. " lua " .. wait_announcement_script .. " " .. uuid;
+		api:executeString(command);
 	end
 
 --call screen enabled
@@ -368,9 +498,10 @@
 
 		--callback function detecting dtmf
 		function on_dtmf(s, _type, obj, arg)
-			local k, v = nil, nil
 			if (_type == "dtmf") then
-				dtmf_entered = 1;
+				if (arg ~= nil) then
+					dtmf_digits = dtmf_digits .. tostring(arg);
+				end
 				return 'break'
 			else
 				return ''
@@ -400,7 +531,7 @@
 		silence_seconds = settings:get('recordings', 'recording_silence_seconds', 'numeric') or 3;
 
 		--create the call scree file name
-		call_sreen_name = 'call_screen.'..uuid..'.'..record_ext;
+		call_screen_name = 'call_screen.'..uuid..'.'..record_ext;
 
 		--make sure the recording directory exists
 		if (not file_exists(record_path)) then
@@ -412,7 +543,7 @@
 
 		--record the name and reason for calling
 		if (session:ready()) then
-			result = session:recordFile(record_path..'/'..call_sreen_name, max_length_seconds, silence_threshold, silence_seconds);
+			result = session:recordFile(record_path..'/'..call_screen_name, max_length_seconds, silence_threshold, silence_seconds);
 		end
 	end
 
@@ -435,105 +566,9 @@
 		end
 	end
 
---check the missed calls
-	function missed()
-		--add missed call channel variable
-			if (session) then
-				session:setVariable("missed_call", 'true');
-			end
-
-		--send missed call email
-		if (missed_call_app ~= nil and missed_call_data ~= nil) then
-			if (missed_call_app == "email") then
-				--prepare the email address
-					mail_to = missed_call_data;
-
-				--set the sounds path for the language, dialect and voice
-					default_language = session:getVariable("default_language");
-					default_dialect = session:getVariable("default_dialect");
-					default_voice = session:getVariable("default_voice");
-					if (not default_language) then default_language = 'en'; end
-					if (not default_dialect) then default_dialect = 'us'; end
-					if (not default_voice) then default_voice = 'callie'; end
-
-				--predefine the variables
-					subject = '';
-					body = '';
-
-				--get the templates
-					local sql = "SELECT * FROM v_email_templates ";
-					sql = sql .. "WHERE (domain_uuid = :domain_uuid or domain_uuid is null) ";
-					sql = sql .. "AND template_language = :template_language ";
-					sql = sql .. "AND template_category = 'missed' ";
-					sql = sql .. "AND template_enabled = true ";
-					sql = sql .. "ORDER BY domain_uuid DESC ";
-					local params = {domain_uuid = domain_uuid, template_language = default_language.."-"..default_dialect};
-					if (debug["sql"]) then
-						freeswitch.consoleLog("notice", "[voicemail] SQL: " .. sql .. "; params:" .. json.encode(params) .. "\n");
-					end
-					dbh = Database.new('system');
-					dbh:query(sql, params, function(row)
-						subject = row["template_subject"];
-						body = row["template_body"];
-					end);
-
-				--prepare the headers
-					local headers = {
-						["X-FusionPBX-Domain-UUID"] = domain_uuid;
-						["X-FusionPBX-Domain-Name"] = domain_name;
-						["X-FusionPBX-Call-UUID"]   = uuid;
-						["X-FusionPBX-Email-Type"]  = 'missed';
-					}
-
-				--remove quotes from caller id name and number
-					caller_id_name = caller_id_name:gsub("'", "&#39;");
-					caller_id_name = caller_id_name:gsub([["]], "&#34;");
-					caller_id_number = caller_id_number:gsub("'", "&#39;");
-					caller_id_number = caller_id_number:gsub([["]], "&#34;");
-
-				--prepare the subject
-					subject = subject:gsub("${caller_id_name}", caller_id_name);
-					subject = subject:gsub("${caller_id_number}", caller_id_number);
-					subject = subject:gsub("${ring_group_name}", ring_group_name);
-					subject = subject:gsub("${ring_group_extension}", ring_group_extension);
-					subject = subject:gsub("${sip_to_user}", ring_group_name);
-					subject = subject:gsub("${dialed_user}", ring_group_extension);
-					subject = subject:gsub("${destination_number}", destination_number);
-					subject = trim(subject);
-					subject = '=?utf-8?B?'..base64.encode(subject)..'?=';
-
-				--prepare the body
-					body = body:gsub("${caller_id_name}", caller_id_name);
-					body = body:gsub("${caller_id_number}", caller_id_number);
-					body = body:gsub("${ring_group_name}", ring_group_name);
-					body = body:gsub("${ring_group_extension}", ring_group_extension);
-					body = body:gsub("${sip_to_user}", ring_group_name);
-					body = body:gsub("${dialed_user}", ring_group_extension);
-					body = body:gsub("${destination_number}", destination_number);
-					body = body:gsub(" ", "&nbsp;");
-					body = body:gsub("%s+", "");
-					body = body:gsub("&nbsp;", " ");
-					body = body:gsub("\n", "");
-					body = body:gsub("\n", "");
-					body = trim(body);
-
-				--send the email
-					send_mail(headers,
-						nil,
-						mail_to,
-						{subject, body}
-					);
-
-				--send the debug info
-					if (debug["info"]) then
-						freeswitch.consoleLog("notice", "[missed call]: "..mail_to.." '"..subject.."' '"..body.."'\n");
-					end
-			end
-		end
-	end
-
 --get the destination and follow the forward
 	function get_forward_all(count, destination_number, domain_name)
+		local toll_allow = nil;
 		cmd = "user_exists id ".. destination_number .." "..domain_name;
 		--freeswitch.consoleLog("notice", "[ring groups][call forward all] " .. cmd .. "\n");
 		user_exists = api:executeString(cmd);
@@ -542,7 +577,7 @@
 				cmd = "user_data ".. destination_number .."@" ..domain_name.." var forward_all_enabled";
 				if (api:executeString(cmd) == "true") then
 					--get the toll_allow var
-						cmd = "user_data ".. destination_number .."@" ..leg_domain_name.." var toll_allow";
+						cmd = "user_data ".. destination_number .."@" ..domain_name.." var toll_allow";
 						toll_allow = api:executeString(cmd);
 						--freeswitch.consoleLog("notice", "[ring groups][call forward all] " .. destination_number .. " toll_allow is ".. toll_allow .."\n");
 
@@ -561,6 +596,12 @@
 
 --process the ring group
 	if (ring_group_forward_enabled == 'true' and string.len(ring_group_forward_destination) > 0) then
+
+		--check if the caller is a local user
+			if (caller_is_local == nil and tonumber(caller_id_number) ~= nil) then
+				cmd = "user_exists id ".. caller_id_number .." "..domain_name;
+				caller_is_local = api:executeString(cmd);
+			end
 
 		--set the outbound caller id
 			if (caller_is_local == 'true' and outbound_caller_id_name ~= nil) then
@@ -678,7 +719,7 @@
 				row['toll_allow'] = toll_allow;
 
 				--check if the user exists
-				cmd = "user_exists id ".. destination_number .." "..domain_name;
+				cmd = "user_exists id ".. destination_number .." "..leg_domain_name;
 				user_exists = api:executeString(cmd);
 
 				--cmd = "user_exists id ".. destination_number .." "..domain_name;
@@ -716,9 +757,11 @@
 					session:execute("set", "ignore_early_media=true");
 
 				--get the dialplan data and save it to a table
-					--dialplans = route_to_bridge.preload_dialplan(
-					--	dbh, domain_uuid, {hostname = hostname, context = context}
-					--)
+				if (external_route == "bridge") then
+					dialplans = route_to_bridge.preload_dialplan(
+						dbh, domain_uuid, {context = context}
+					)
+				end
 			end
 
 		---add follow me destinations
@@ -848,9 +891,18 @@
 							freeswitch.consoleLog("NOTICE", "[ring_group] "..cmd.."\n");
 							not_registered_destination_number = api:executeString(cmd);
 							freeswitch.consoleLog("NOTICE", "[ring_group] "..not_registered_destination_number.."\n");
-							if (not_registered_destination_number ~= nil) then
+							if (not_registered_destination_number ~= nil and not_registered_destination_number ~= '') then
 								destination_number = not_registered_destination_number;
 								destinations[key]['destination_number'] = destination_number;
+								--the forward destination is a different number; re-evaluate whether it is a user
+								--so the main loop routes it correctly (an external forward number must not inherit
+								--the original member's user_exists=true, or it is dropped as an unregistered user)
+								cmd = "user_exists id ".. destination_number .." "..domain_name;
+								destinations[key]['user_exists'] = api:executeString(cmd);
+							else
+								--no forward destination for an unregistered user - remove this extension from the ring group
+								freeswitch.consoleLog("NOTICE", "[ring_group] no forward destination for unregistered user, removing extension "..row.destination_number.."@"..domain_name.."\n");
+								destinations[key] = nil;
 							end
 						end
 					end
@@ -915,6 +967,7 @@
 			end
 
 		--process the destinations
+			app_data = nil;
 			x = 1;
 			for key, row in pairs(destinations) do
 				if (tonumber(row.destination_timeout) > 0) then
@@ -939,12 +992,12 @@
 
 					--follow the forwards
 						if (row.ring_group_call_forward_enabled == 'true') then
-							count, destination_number = get_forward_all(0, destination_number, leg_domain_name);
+							count, destination_number = get_forward_all(0, destination_number, row.domain_name);
 						end
 
 					--check if the user exists
 						if (user_exists == nil) then
-							cmd = "user_exists id ".. destination_number .." "..domain_name;
+							cmd = "user_exists id ".. destination_number .." "..row.domain_name;
 							user_exists = api:executeString(cmd);
 						end
 
@@ -1084,6 +1137,7 @@
 
 							--send to user
 							local dial_string_user = "[sip_invite_domain="..domain_name..",call_direction="..call_direction..",";
+							dial_string_user = dial_string_user .. "domain_name="..domain_name..",domain_uuid="..domain_uuid..",";
 							dial_string_user = dial_string_user .. group_confirm..","..timeout_name.."="..destination_timeout..",";
 							dial_string_user = dial_string_user .. delay_name.."="..destination_delay..",";
 							dial_string_user = dial_string_user .. "dialed_extension=" .. row.destination_number .. ",";
@@ -1099,18 +1153,38 @@
 							if (user_contact ~= "error/user_not_registered") then
 								dial_string = dial_string_user .. user_contact;
 							end
-							if (verto_enabled == 'true') then
+							if (verto_enabled == 'true' and dial_string ~= nil) then
 								dial_string = dial_string .. ","..api:executeString("verto_contact ".. row.destination_number .."@" ..domain_name);
 							end
 						elseif (tonumber(destination_number) == nil) then
 							--sip uri
-							dial_string = "[sip_invite_domain="..domain_name..",domain_name="..domain_name..",call_direction="..call_direction..","..group_confirm..""..timeout_name.."="..destination_timeout..","..delay_name.."="..destination_delay.."]" .. row.destination_number;
+							dial_string = "[sip_invite_domain="..domain_name..",domain_name="..domain_name..",domain_uuid="..domain_uuid..",call_direction="..call_direction..","..group_confirm..""..timeout_name.."="..destination_timeout..","..delay_name.."="..destination_delay.."]" .. row.destination_number;
 						else
 							--external number
 								-- have to double destination_delay here due a FS bug requiring a 50% delay value for internal externsions, but not external calls.
 								--destination_delay = destination_delay * 2;
 
-								route_bridge = 'loopback/'..destination_number;
+								--set the bridge to use for the external number
+									route_bridge = 'loopback/'..destination_number;
+									route_actions = '';
+									if (external_route == "bridge") then
+										--route the external number through the outbound routes (route_to_bridge)
+										local fields = {
+											context = context,
+											destination_number = destination_number,
+											caller_id_number = caller_id_number,
+											__api__ = api,
+										}
+										local route = route_to_bridge(dialplans or dbh, domain_uuid, fields)
+										if (route and route.bridge) then
+											--use the bridge from the outbound route
+												route_bridge = route.bridge;
+											--collect the set/export actions from the outbound route
+												for _, action in ipairs(route) do
+													route_actions = route_actions .. action .. ",";
+												end
+										end
+									end
 								if (extension_toll_allow ~= nil) then
 									toll_allow = extension_toll_allow:gsub(",", ":");
 								end
@@ -1159,12 +1233,13 @@
 								end
 
 							--set the destination dial string
-								dial_string = "["..diversion_header.."toll_allow=".. toll_allow ..",".. caller_id ..",sip_invite_domain="..domain_name..",domain_name="..domain_name..",domain_uuid="..domain_uuid..",call_direction="..call_direction..","..group_confirm..""..timeout_name.."="..destination_timeout..","..delay_name.."="..destination_delay..","..sip_h_caller_destination.."]"..route_bridge
+								dial_string = "["..route_actions..diversion_header.."toll_allow=".. toll_allow ..",".. caller_id ..",sip_invite_domain="..domain_name..",domain_name="..domain_name..",domain_uuid="..domain_uuid..",call_direction="..call_direction..","..group_confirm..""..timeout_name.."="..destination_timeout..","..delay_name.."="..destination_delay..","..sip_h_caller_destination.."]"..route_bridge
 						end
 
 					--add a delimiter between destinations
+						freeswitch.consoleLog("notice", "[ring group] leg "..x..": destination_number="..tostring(destination_number).." user_exists="..tostring(user_exists).." dial_string="..tostring(dial_string).."\\n");
 						if (dial_string ~= nil) then
-							--freeswitch.consoleLog("notice", "[ring group] dial_string: " .. dial_string .. "\n");
+							freeswitch.consoleLog("notice", "[ring group] dial_string: " .. dial_string .. "\n");
 							if (x == 1) then
 								if (ring_group_strategy == "enterprise") then
 									app_data = dial_string;
@@ -1222,7 +1297,6 @@
 					for _, str in ipairs(bindings) do
 						session:execute("bind_digit_action", str .. "," .. bind_target)
 					end
-					session:execute("digit_action_set_realm", "local");
 
 				--if the user is busy rollover to the next destination
 					if (ring_group_strategy == "rollover") then
@@ -1261,7 +1335,22 @@
 								elseif (tonumber(destination_number) == nil) then
 									dial_string = "["..group_confirm.."sip_invite_domain="..domain_name..",originate_timeout="..destination_timeout..",call_direction=outbound,domain_name="..domain_name..",domain_uuid="..domain_uuid.."]" .. destination_number;
 								else
-									dial_string = "["..group_confirm.."sip_invite_domain="..domain_name..",originate_timeout="..destination_timeout..",domain_name="..domain_name..",domain_uuid="..domain_uuid..",call_direction=outbound]loopback/" .. destination_number;
+									--external number
+									local route_bridge = 'loopback/' .. destination_number;
+									if (external_route == 'bridge') then
+										--route the external number through the outbound routes (route_to_bridge)
+										local fields = {
+											context = context,
+											destination_number = destination_number,
+											caller_id_number = caller_id_number,
+											__api__ = api,
+										}
+										local route = route_to_bridge(dialplans or dbh, domain_uuid, fields)
+										if (route and route.bridge) then
+											route_bridge = route.bridge;
+										end
+									end
+									dial_string = "["..group_confirm.."sip_invite_domain="..domain_name..",originate_timeout="..destination_timeout..",domain_name="..domain_name..",domain_uuid="..domain_uuid..",call_direction=outbound]" .. route_bridge;
 								end
 
 							--add the delimiter
@@ -1279,6 +1368,9 @@
 					end
 
 				--execute the bridge
+					if (app_data == nil) then
+						freeswitch.consoleLog("notice", "[ring group] WARNING: app_data is nil - no legs to bridge (check destination_timeout > 0 and member registration)\\n");
+					end
 					if (app_data ~= nil) then
 						if (ring_group_strategy == "enterprise") then
 							app_data = app_data:gsub("%[", "{");
@@ -1315,6 +1407,7 @@
 							or session:getVariable("originate_disposition") == "USER_BUSY"
 							or session:getVariable("originate_disposition") == "RECOVERY_ON_TIMER_EXPIRE"
 							or session:getVariable("originate_disposition") == "failure"
+							or session:getVariable("originate_disposition") == "CALL_REJECTED"
 						) then
 							--execute the time out action
 								if ring_group_timeout_app and #ring_group_timeout_app > 0 then

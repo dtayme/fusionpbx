@@ -61,18 +61,19 @@
 		$file = $settings->get('server', 'temp')."/destinations-".$_SESSION['domain_name'].".csv";
 		file_put_contents($file, $_POST['data']);
 		$_SESSION['file'] = $file;
-		$_SESSION['file_name'] = $_FILES['ulfile']['name'];
+		$_SESSION['file_name'] = basename($_FILES['ulfile']['name']);
 	}
 
 //copy the csv file
 	//$_POST['submit'] == "Upload" &&
 	if (!empty($_FILES['ulfile']['tmp_name']) && is_uploaded_file($_FILES['ulfile']['tmp_name']) && permission_exists('destination_upload')) {
 		if ($_POST['type'] == 'csv') {
-			move_uploaded_file($_FILES['ulfile']['tmp_name'], $settings->get('server', 'temp').'/'.$_FILES['ulfile']['name']);
-			$save_msg = "Uploaded file to ".$settings->get('server', 'temp')."/". htmlentities($_FILES['ulfile']['name']);
+			$upload_name = basename($_FILES['ulfile']['name']);
+			move_uploaded_file($_FILES['ulfile']['tmp_name'], $settings->get('server', 'temp').'/'.$upload_name);
+			$save_msg = "Uploaded file to ".$settings->get('server', 'temp')."/". htmlentities($upload_name);
 			//system('chmod -R 744 '.$settings->get('server', 'temp').'*');
 			unset($_POST['txtCommand']);
-			$file = $settings->get('server', 'temp').'/'.$_FILES['ulfile']['name'];
+			$file = $settings->get('server', 'temp').'/'.$upload_name;
 			$_SESSION['file'] = $file;
 		}
 	}
@@ -148,6 +149,9 @@
 				exit;
 			}
 
+		//create the permission object
+			$p = permissions::new();
+
 		//user selected fields
 			$fields = $_POST['fields'];
 			$domain_uuid = $_POST['domain_uuid'];
@@ -212,20 +216,27 @@
 
 							//add the actions
 								foreach ($array['destinations'] as $row) {
-
 									//build the array
 										if (!empty($row['destination_actions']) && is_json($row['destination_actions'])) {
-											$destination_actions = $row['destination_actions']; // use json actions
-											$temp = json_decode($row['destination_actions'], true);
-											$row['destination_app'] = $temp[array_key_last($temp)]['destination_app'];
-											$row['destination_data'] = $temp[array_key_last($temp)]['destination_data'];
-											unset($temp);
+											// use destination_actions json
+											$destination_actions_json = $row['destination_actions'];
+											$destination_actions = json_decode($row['destination_actions'], true);
+											$row['destination_app'] = $destination_actions[array_key_last($destination_actions)]['destination_app'];
+											$row['destination_data'] = $destination_actions[array_key_last($destination_actions)]['destination_data'];
 										}
 										else if (!empty($row['destination_app']) && !empty($row['destination_data'])) {
-											$actions[0]['destination_app'] = $row['destination_app'];
-											$actions[0]['destination_data'] = $row['destination_data'];
-											$destination_actions = json_encode($actions);
-											unset($actions);
+											// use destination app and data
+											$destination_actions[0]['destination_app'] = $row['destination_app'];
+											$destination_actions[0]['destination_data'] = $row['destination_data'];
+											$destination_actions_json = json_encode($destination_actions);
+										}
+
+									//determine if there is a bridge in the destination actions array
+										$bridge_exists = false;
+										foreach($destination_actions as $sub_row) {
+											if ($sub_row['destination_app'] == 'bridge') {
+												$bridge_exists = true;
+											}
 										}
 
 									//get the values
@@ -247,7 +258,7 @@
 
 									//add the additional fields
 										$dialplan_uuid = uuid();
-										$array["destinations"][$row_id]['destination_actions'] = $destination_actions;
+										$array["destinations"][$row_id]['destination_actions'] = $destination_actions_json;
 										$array["destinations"][$row_id]['destination_app'] = $destination_app;
 										$array["destinations"][$row_id]['destination_data'] = $destination_data;
 										$array["destinations"][$row_id]['destination_type'] = $destination_type;
@@ -443,8 +454,8 @@
 													$dialplan_detail_order = $dialplan_detail_order + 10;
 												}
 
-											//add hangup_after_bridge and continue_on_fail
-												if (!empty($destination_data) && $destination_app == 'bridge') {
+											//add hangup_after_bridge and continue_on_fail when a bridge statement is used
+												if ($bridge_exists) {
 													$array["dialplans"][$row_id]["dialplan_details"][$y]["domain_uuid"] = $domain_uuid;
 													$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_tag"] = "action";
 													$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_type"] = "set";
@@ -468,15 +479,18 @@
 													$dialplan_detail_order = $dialplan_detail_order + 10;
 												}
 
-											//set the destination app and data
-												if (strlen($destination_app) > 0 && !empty($destination_data)) {
-													$array["dialplans"][$row_id]["dialplan_details"][$y]["domain_uuid"] = $domain_uuid;
-													$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_tag"] = "action";
-													$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_type"] = $destination_app;
-													$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_data"] = $destination_data;
-													$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_order"] = $dialplan_detail_order;
-													$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_enabled"] = 'true';
-													$y++;
+											//add the destination app and data
+												if (!empty($destination_actions)) {
+													//use the destination actions array to add the destination_app and destination_data
+													foreach($destination_actions as $sub_row) {
+														$array["dialplans"][$row_id]["dialplan_details"][$y]["domain_uuid"] = $domain_uuid;
+														$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_tag"] = "action";
+														$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_type"] = $sub_row['destination_app'];
+														$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_data"] = $sub_row['destination_data'];
+														$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_order"] = $dialplan_detail_order;
+														$array["dialplans"][$row_id]["dialplan_details"][$y]["dialplan_detail_enabled"] = 'true';
+														$y++;
+													}
 
 													//set inline to true
 													if (!empty($action_app) && ($action_app == 'set' || $action_app == 'export')) {
@@ -495,16 +509,22 @@
 
 							//process a chunk of the array
 								if ($row_id === 1000) {
+									//add the dialplan permission
+									$p->add("dialplan_add", "temp");
+									$p->add("dialplan_edit", "temp");
 
 									//save to the data
-										$database->save($array);
-										//$message = $database->message;
+									$database->save($array);
+
+									//remove the temporary permission
+									$p->delete("dialplan_add", "temp");
+									$p->delete("dialplan_edit", "temp");
 
 									//clear the array
-										unset($array);
+									unset($array);
 
 									//set the row id back to 0
-										$row_id = 0;
+									$row_id = 0;
 								}
 
 						}
@@ -515,10 +535,27 @@
 
 				//save to the data
 					if (!empty($array) && is_array($array)) {
+						//add the dialplan permission
+						$p->add("dialplan_add", "temp");
+						$p->add("dialplan_edit", "temp");
+
+						//save to the data
 						$database->save($array);
-						//$message = $database->message;
+
+						//remove the temporary permission
+						$p->delete("dialplan_add", "temp");
+						$p->delete("dialplan_edit", "temp");
 					}
 
+			}
+
+		//clear the cache
+			$cache = new cache;
+			if ($settings->get('destinations', 'dialplan_mode', '') == 'multiple') {
+				$cache->delete("dialplan:".$_SESSION["domain_name"]);
+			}
+			if ($settings->get('destinations', 'dialplan_mode', '') == 'single') {
+				$response = $cache->flush();
 			}
 
 		//send the redirect header

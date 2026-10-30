@@ -5,10 +5,7 @@
 
 //check permisions
 	require_once "resources/check_auth.php";
-	if (permission_exists('xml_cdr_view')) {
-		//access granted
-	}
-	else {
+	if (!permission_exists('system_view_info')) {
 		echo "access denied";
 		exit;
 	}
@@ -134,7 +131,7 @@
 		<div class='hud_chart' style='width: 175px;'><canvas id='system_status_chart'></canvas></div>
 
 		<script>
-			const system_status_chart = new Chart(
+			window.system_status_chart = new Chart(
 				document.getElementById('system_status_chart').getContext('2d'),
 				{
 					type: 'doughnut',
@@ -180,6 +177,9 @@
 					}]
 				}
 			);
+			if (window.system_status_chart.tooltip) {
+				window.system_status_chart.tooltip._chart = window.system_status_chart;
+			}
 		</script>
 		<?php
 	}

@@ -4,7 +4,7 @@
 $array['dashboard_widgets'][$x]['dashboard_uuid'] = '3e2cbaa4-2bec-41b2-a626-999a59b8b19c';
 $array['dashboard_widgets'][$x]['dashboard_widget_uuid'] = 'ea3f5a8a-fc93-47d7-a632-a733522affc3';
 $array['dashboard_widgets'][$x]['widget_name'] = 'Fax Server';
-$array['dashboard_widgets'][$x]['widget_path'] = 'core/dashboard/resources/dashboard/icon.php';
+$array['dashboard_widgets'][$x]['widget_path'] = 'dashboard/icon';
 $array['dashboard_widgets'][$x]['widget_icon'] = 'fa-print';
 $array['dashboard_widgets'][$x]['widget_icon_color'] = '#5D5CE3';
 $array['dashboard_widgets'][$x]['widget_url'] = '/app/fax/fax.php';
@@ -17,7 +17,7 @@ $array['dashboard_widgets'][$x]['widget_content_details'] = '';
 $array['dashboard_widgets'][$x]['widget_chart_type'] = '';
 $array['dashboard_widgets'][$x]['widget_chart_type_options'] = [];
 $array['dashboard_widgets'][$x]['widget_label_enabled'] = 'true';
-$array['dashboard_widgets'][$x]['widget_label_text_color'] = '#444444';
+$array['dashboard_widgets'][$x]['widget_label_text_color'] = '';
 $array['dashboard_widgets'][$x]['widget_label_text_color_hover'] = '';
 $array['dashboard_widgets'][$x]['widget_label_background_color'] = '';
 $array['dashboard_widgets'][$x]['widget_label_background_color_hover'] = '';

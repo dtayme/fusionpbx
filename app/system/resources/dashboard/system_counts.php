@@ -5,10 +5,7 @@
 
 //check permisions
 	require_once "resources/check_auth.php";
-	if (permission_exists('xml_cdr_view')) {
-		//access granted
-	}
-	else {
+	if (!permission_exists('system_view_info')) {
 		echo "access denied";
 		exit;
 	}
@@ -305,7 +302,7 @@
 			<div class='hud_chart' style='width: 250px;'><canvas id='system_counts_chart'></canvas></div>
 
 			<script>
-				const system_counts_chart = new Chart(
+				window.system_counts_chart = new Chart(
 					document.getElementById('system_counts_chart').getContext('2d'),
 					{
 						type: 'doughnut',
@@ -351,6 +348,9 @@
 						}]
 					}
 				);
+				if (window.system_counts_chart.tooltip) {
+					window.system_counts_chart.tooltip._chart = window.system_counts_chart;
+				}
 			</script>
 			<?php
 		}

@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Copyright (C) 2020-2025 All Rights Reserved.
+	Copyright (C) 2020-2026 All Rights Reserved.
 
 	Contributor(s):
 	Mark J Crane <markjcrane@fusionpbx.com>
@@ -169,6 +169,23 @@
 						$array['device_profiles'][0]['device_profile_settings'][$y]["profile_setting_description"] = $row["profile_setting_description"];
 						$y++;
 					}
+				}
+			}
+
+		//update device key ids if drag and drop was used
+			if (!empty($_POST['device_key_ids'])) {
+				$device_key_ids = explode(",", $_POST["device_key_ids"]);
+
+				foreach ($device_key_ids as $device) {
+					list($key_uuid, $key_id) = explode("|", $device);
+
+					foreach ($array['device_profiles'][0]['device_profile_keys'] as &$key) {
+						if ($key['device_profile_key_uuid'] == $key_uuid) {
+							$key['profile_key_id'] = $key_id;
+							break;
+						}
+					}
+					unset($key);
 				}
 			}
 
@@ -488,6 +505,8 @@
 
 		//set the column names
 		if ($previous_profile_key_vendor != $row['profile_key_vendor']) {
+			echo "		</tbody>\n";
+			echo "		<tbody class='".(!empty($row['device_profile_key_uuid']) ? 'sortable' : null)."'>\n";
 			echo "			<tr>\n";
 			echo "				<th class='vtablereq'>".$text['label-device_key_category']."</td>\n";
 			echo "				<th class='vtablereq'>".$text['label-device_key_id']."</td>\n";
@@ -514,11 +533,12 @@
 				echo "					<span id='delete_toggle_keys_".$device_vendor."'><input type='checkbox' id='checkbox_all_keys_".$device_vendor."' name='checkbox_all' onclick=\"edit_all_toggle('keys_".$device_vendor."');\"></span>\n";
 				echo "				</td>\n";
 			}
+			echo "				<td class='vtable'></td>\n";
 			echo "			</tr>\n";
 		}
 
 		//show all the rows in the array
-		echo "		<tr>\n";
+		echo "		<tr class='".(is_uuid($row["device_profile_key_uuid"]) ? 'draggable' : null)."' data-key-uuid='".$row['device_profile_key_uuid']."'>\n";
 		echo "			<input type='hidden' name='device_profile_keys[$x][domain_uuid]' value=\"".escape($row["domain_uuid"])."\">\n";
 		echo "			<input type='hidden' name='device_profile_keys[$x][device_profile_uuid]' value=\"".escape($row["device_profile_uuid"])."\">\n";
 		echo "			<input type='hidden' name='device_profile_keys[$x][device_profile_key_uuid]' value=\"".(is_uuid($row["device_profile_key_uuid"]) ? $row["device_profile_key_uuid"] : uuid())."\">\n";
@@ -580,7 +600,7 @@
 		echo "			</td>\n";
 		echo "			<td class='formfld'>\n";
 		//echo "				<input class='formfld' type='text' name='device_profile_keys[$x][profile_key_type]' maxlength='255' value=\"".escape($row["profile_key_type"])."\">\n";
-		echo "				<select class='formfld' name='device_profile_keys[".$x."][profile_key_type]' id='key_type_".$x."'>\n";
+		echo "				<select class='formfld' name='device_profile_keys[".$x."][profile_key_type]' id='key_type_".$x."' onchange=\"document.getElementById('key_vendor_".$x."').value = this.options[this.selectedIndex].getAttribute('vendor');\">\n";
 		echo "					<option value=''></option>\n";
 		$previous_vendor = '';
 		$i = 0;
@@ -667,6 +687,11 @@
 			}
 			echo "			</td>\n";
 		}
+		if (is_uuid($row["device_profile_key_uuid"])) {
+			echo "			<td class='vtable' style='text-align: center;'>\n";
+			echo "				<span class='drag_handle' style='color: #00000055; cursor: grab;'><i class='fa-solid fa-grip-lines' style='width: 15px;'></i></span>\n";
+			echo "			</td>\n";
+		}
 		echo "		</tr>\n";
 
 		//set the previous vendor
@@ -675,11 +700,94 @@
 		//increment the array key
 		$x++;
 	}
+
+	echo "	</tbody>\n";
 	echo "	</table>\n";
 	echo "<br />\n";
 	echo ($text['description-profile_key_icon'] ?? '')."\n";
 	echo "</td>\n";
 	echo "</tr>\n";
+
+	// Filter device key types when a vendor is selected
+	echo "<select id='hidden_device_key_types' style='display: none;'>\n";
+	$prev_vendor = '';
+	foreach ($vendor_functions as $function) {
+		if ($function['vendor_name'] != $prev_vendor) {
+			if ($prev_vendor !== '') {
+				echo "	</optgroup>\n";
+			}
+			echo "	<optgroup label='".escape(ucwords($function['vendor_name']))."'>\n";
+			$prev_vendor = $function['vendor_name'];
+		}
+		echo "	<option value='".escape($function['value'])."' vendor='".escape($function['vendor_name'])."'>".($text['label-'.$function['type'] ?? ''] ?? $function['value'])."</option>\n";
+	}
+	if ($prev_vendor !== '') {
+		echo "	</optgroup>\n";
+	}
+	echo "</select>\n";
+	?>
+	<script>
+	const hidden_select = document.getElementById('hidden_device_key_types');
+
+	if (hidden_select) {
+		function populate_type_select(type_select, vendor_value) {
+			// Clear current options
+			type_select.innerHTML = '<option value=""></option>';
+
+			const options = hidden_select.querySelectorAll('option');
+			const selected_vendor = (vendor_value || '').trim().toLowerCase();
+
+			let last_label = null;
+			let current_group = null;
+
+			for (const option of options) {
+				const option_vendor = (option.getAttribute('vendor') || '').trim().toLowerCase();
+
+				// Filter by vendor if one is selected
+				if (selected_vendor !== '' && option_vendor !== selected_vendor) {
+					continue;
+				}
+
+				if (selected_vendor === '') {
+					// When no vendor selected, append all options with optgroups
+					const option_group = option.closest('optgroup');
+					const option_label = option_group ? option_group.getAttribute('label') : null;
+
+					if (option_label && option_label !== last_label) {
+						if (current_group) type_select.appendChild(current_group);
+						current_group = document.createElement('optgroup');
+						current_group.setAttribute('label', option_label);
+						last_label = option_label;
+					}
+
+					if (current_group) {
+						current_group.appendChild(option.cloneNode(true));
+					} else {
+						type_select.appendChild(option.cloneNode(true));
+					}
+				} else {
+					// When a vendor is selected, append options without optgroups
+					type_select.appendChild(option.cloneNode(true));
+				}
+			}
+
+			// Append the final group if it exists
+			if (current_group) type_select.appendChild(current_group);
+		}
+
+		// Attach listener to every vendor select in the table
+		document.querySelectorAll('select[name*="[profile_key_vendor]"]').forEach(vendor_select => {
+			vendor_select.addEventListener('change', function() {
+				const type_select = this.closest('tr').querySelector('select[name*="[profile_key_type]"]');
+				if (!type_select) return;
+
+				populate_type_select(type_select, this.value);
+				type_select.value = ''; // Reset selection when vendor changes
+			});
+		});
+	}
+	</script>
+	<?php
 
 	if (permission_exists('device_profile_setting_edit')) {
 		echo "<tr>\n";
@@ -805,6 +913,83 @@
 
 	echo "<input type='hidden' name='device_profile_uuid' value='".escape($device_profile_uuid)."'>\n";
 	echo "<input type='hidden' name='".$token['name']."' value='".$token['hash']."'>\n";
+
+	//include sortablejs
+	echo "<script src='/resources/sortablejs/sortable.min.js'></script>";
+
+	//device key drag and drop
+	echo "<input type='hidden' id='device_key_ids' name='device_key_ids' value='' />\n";
+	?>
+	<style>
+
+	.selected td:has(.drag_handle) {
+		background-color: #00000015;
+	}
+
+	</style>
+	<script>
+
+	const sortable_lists = document.querySelectorAll('.sortable');
+
+	sortable_lists.forEach(function(list) {
+		Sortable.create(list, {
+			animation: 150,
+			draggable: '.draggable',
+			handle: '.drag_handle',
+			onSort: update_device_key_ids,
+			multiDrag: true,
+			selectedClass: 'selected',
+		});
+	});
+
+	function update_device_key_ids() {
+		let device_key_list = [];
+
+		sortable_lists.forEach(function(list) {
+			let device_keys = list.querySelectorAll('tr.draggable');
+			let key_id = 1;
+			let expansion_map = {};
+
+			// Add the non-expansion device keys to the list
+			device_keys.forEach(function(device_key) {
+				let key_uuid = device_key.getAttribute('data-key-uuid');
+				let category_select = device_key.querySelector('select[name*="[profile_key_category]"]');
+				let category = category_select ? category_select.value : "";
+
+				// Skip expansion keys after adding them to the expansion_map
+				if (category.includes('expansion')) {
+					// Initialize array if it doesn't exist
+					if (!expansion_map[category]) {
+						expansion_map[category] = [];
+					}
+					expansion_map[category].push(key_uuid);
+					return;
+				}
+
+				device_key_list.push(`${key_uuid}|${key_id}`);
+				key_id += 1;
+			});
+
+			// Add the expansion device keys to the list
+			for (let key in expansion_map) {
+				key_id = 1;
+
+				if (expansion_map[key]) {
+					let expansion_keys = expansion_map[key];
+
+					expansion_keys.forEach(function(key_uuid) {
+						device_key_list.push(`${key_uuid}|${key_id}`);
+						key_id += 1;
+					});
+				}
+			}
+		});
+
+		document.getElementById('device_key_ids').value = device_key_list;
+	}
+
+	</script>
+	<?php
 
 	echo "</form>";
 

@@ -362,7 +362,7 @@ if (!function_exists('fax_split_dtmf')) {
 				if ($fax_file_extension != "pdf" && $fax_file_extension != "tif") {
 					chdir($dir_fax_temp);
 					$command = $IS_WINDOWS ? '' : 'export HOME=/tmp && ';
-					$command .= 'libreoffice --headless --convert-to pdf --outdir '.$dir_fax_temp.' '.$dir_fax_temp.'/'.escapeshellarg($fax_name).'.'.escapeshellarg($fax_file_extension);
+					$command .= 'libreoffice --headless --convert-to pdf --outdir ' . escapeshellarg($dir_fax_temp) . ' ' . escapeshellarg($dir_fax_temp . '/' . $fax_name . '.' . $fax_file_extension);
 					exec($command);
 					@unlink($dir_fax_temp.'/'.$fax_name.'.'.$fax_file_extension);
 				}
@@ -372,14 +372,14 @@ if (!function_exists('fax_split_dtmf')) {
 					chdir($dir_fax_temp);
 
 					//convert pdf to tif
-					$cmd = exec('which gs')." -q -r".$gs_r." -g".$gs_g." -dBATCH -dPDFFitPage -dNOSAFER -dNOPAUSE -dBATCH -sOutputFile=".escapeshellarg($fax_name).".tif -sDEVICE=tiffg4 -Ilib stocht.ps -c \"{ .75 gt { 1 } { 0 } ifelse} settransfer\" -- ".escapeshellarg($fax_name).".pdf -c quit";
+					$cmd = escapeshellarg(trim((string)exec('which gs')))." -q -r".escapeshellarg($gs_r)." -g".escapeshellarg($gs_g)." -dBATCH -dPDFFitPage -dNOSAFER -dNOPAUSE -dBATCH -sOutputFile=".escapeshellarg($fax_name.".tif")." -sDEVICE=tiffg4 -Ilib stocht.ps -c \"{ .75 gt { 1 } { 0 } ifelse} settransfer\" -- ".escapeshellarg($fax_name.".pdf")." -c quit";
 					// echo($cmd . "<br/>\n");
 					exec($cmd);
 					@unlink($dir_fax_temp.'/'.$fax_name.'.pdf');
 				}
 
 				//get the page count
-				$cmd = exec('which tiffinfo')." ".correct_path($dir_fax_temp.'/'.$fax_name).".tif | grep \"Page Number\" | grep -c \"P\"";
+				$cmd = escapeshellarg(trim((string)exec('which tiffinfo')))." ".escapeshellarg(correct_path($dir_fax_temp.'/'.$fax_name).".tif")." | grep \"Page Number\" | grep -c \"P\"";
 				// echo($cmd . "<br/>\n");
 				$tif_page_count = intval(trim(exec($cmd)));
 				if ($tif_page_count > 0) {
@@ -422,6 +422,7 @@ if (!function_exists('fax_split_dtmf')) {
 			}
 
 			//add blank page
+			$total_pages = $fax_page_count; //Starts total count with attachment pages 
 			$pdf->AddPage('P', array($page_width, $page_height));
 
 			// content offset, if necessary
@@ -555,9 +556,12 @@ if (!function_exists('fax_split_dtmf')) {
 					$pdf->Write(0.3, format_phone($fax_caller_id_number));
 				}
 			}
-			if ($fax_page_count > 0) {
-				$pdf->Text($x + 2.0, $y + 2.6, $fax_page_count.' '.$text['label-fax-page'.(($fax_page_count > 1) ? 's' : null)]);
-			}
+			//if ($fax_page_count > 0) {
+				//$pdf->Text($x + 2.0, $y + 2.6, $fax_page_count.' '.$text['label-fax-page'.(($fax_page_count > 1) ? 's' : null)]);
+			//}
+			$total_pages = $fax_page_count + 1; // 1 = cover page add in the total
+			$pdf->Text($x + 2.0, $y + 2.6, $total_pages.' '.$text['label-fax-page'.(($total_pages > 1) ? 's' : null)]);
+
 			if (!empty($fax_subject)) {
 				$pdf->Text($x + 2.0, $y + 2.9, $fax_subject);
 			}
@@ -572,6 +576,7 @@ if (!function_exists('fax_split_dtmf')) {
 			}
 
 			$pages = $pdf->getNumPages();
+			$total_pages += $pages; // If your cover page expands into multiple pages (long message), those pages are added to total
 
 			if ($pages > 1) {
 				//save ynew for last page
@@ -622,7 +627,7 @@ if (!function_exists('fax_split_dtmf')) {
 			if (file_exists($dir_fax_temp.'/'.$fax_instance_uuid.'_cover.pdf')) {
 				chdir($dir_fax_temp);
 
-				$cmd = gs_cmd("-q -sDEVICE=tiffg32d -r".$gs_r." -g".$gs_g." -dBATCH -dPDFFitPage -dNOSAFER -dNOPAUSE -sOutputFile=".correct_path($fax_instance_uuid)."_cover.tif -- ".correct_path($fax_instance_uuid)."_cover.pdf -c quit");
+				$cmd = gs_cmd("-q -sDEVICE=tiffg32d -r".escapeshellarg($gs_r)." -g".escapeshellarg($gs_g)." -dBATCH -dPDFFitPage -dNOSAFER -dNOPAUSE -sOutputFile=".escapeshellarg(correct_path($fax_instance_uuid)."_cover.tif")." -- ".escapeshellarg(correct_path($fax_instance_uuid)."_cover.pdf")." -c quit");
 				// echo($cmd . "<br/>\n");
 				exec($cmd);
 				if (!empty($tif_files) && is_array($tif_files) && sizeof($tif_files) > 0) {
@@ -637,21 +642,21 @@ if (!function_exists('fax_split_dtmf')) {
 
 		//combine tif files into single multi-page tif
 		if (!empty($tif_files) && is_array($tif_files) && sizeof($tif_files) > 0) {
-			$cmd = exec('which tiffcp')." -c none ";
+			$cmd = escapeshellarg(trim((string)exec('which tiffcp')))." -c none ";
 			foreach ($tif_files as $tif_file) {
-				$cmd .= correct_path($tif_file) . ' ';
+				$cmd .= escapeshellarg(correct_path($tif_file)) . ' ';
 			}
-			$cmd .= correct_path($dir_fax_sent.'/'.$fax_instance_uuid.'.tif');
+			$cmd .= escapeshellarg(correct_path($dir_fax_sent.'/'.$fax_instance_uuid.'.tif'));
 			//echo($cmd . "<br/>\n");
 			exec($cmd);
 
 			//generate pdf from tif
-			$cmd = exec('which tiff2pdf').' -u i -p '.$fax_page_size.
-				' -w '.$page_width.
-				' -l '.$page_height.
+			$cmd = escapeshellarg(trim((string)exec('which tiff2pdf'))).' -u i -p '.escapeshellarg($fax_page_size).
+				' -w '.escapeshellarg($page_width).
+				' -l '.escapeshellarg($page_height).
 				' -f -o '.
-				correct_path($dir_fax_sent.'/'.$fax_instance_uuid.'.pdf').' '.
-				correct_path($dir_fax_sent.'/'.$fax_instance_uuid.'.tif');
+				escapeshellarg(correct_path($dir_fax_sent.'/'.$fax_instance_uuid.'.pdf')).' '.
+				escapeshellarg(correct_path($dir_fax_sent.'/'.$fax_instance_uuid.'.tif'));
 
 			exec($cmd);
 			//echo $cmd."<br />\n";
@@ -985,14 +990,24 @@ if (!defined('STDIN')) {
 
 		echo "	function toggle(field) {";
 		echo "		if (field == 'fax_recipient') {";
+		echo "			var searchable = document.getElementById('fax_recipient_select_search') ? '_search' : '';";
 		echo "			document.getElementById('fax_recipient_select').selectedIndex = 0;";
-		echo "			$('#fax_recipient_select').toggle();";
+		echo "			$('#fax_recipient_select' + searchable).toggle();";
 		echo "			$('#fax_recipient').toggle();";
-		echo "			if ($('#fax_recipient').is(':visible')) { $('#fax_recipient').trigger('focus'); } else { $('#fax_recipient_select').trigger('focus'); }";
+		echo "			if ($('#fax_recipient').is(':visible')) { $('#fax_recipient').trigger('focus'); } else { $('#fax_recipient_select' + searchable).trigger('focus'); }";
 		echo "		}";
 		echo "	}";
 
 		echo "	function contact_load(obj_sel) {";
+		echo "		var searchable_select = document.getElementById('fax_recipient_select_search');";
+		echo "		if (searchable_select) {";
+		echo "			var input = searchable_select.querySelector('input');";
+		echo "			if (input.value == '') {";
+		echo "				return false;";
+		echo "			} else {";
+		echo "				searchable_select.style.display='none';";
+		echo "			}";
+		echo "		}";
 		echo "		obj_sel.style.display='none';";
 		echo "		document.getElementById('fax_recipient').style.display='';";
 		echo "		var selected_option_value = obj_sel.options[obj_sel.selectedIndex].value;";
@@ -1078,7 +1093,7 @@ if (!defined('STDIN')) {
 		echo "</td>\n";
 		echo "<td class='vtable' align='left'>\n";
 		if (is_array($contacts) && @sizeof($contacts) != 0) {
-			echo "	<select class='formfld' style='display: none;' id='fax_recipient_select' onchange='contact_load(this);'>\n";
+			echo "	<select class='formfld searchable_select' style='display: none;' id='fax_recipient_select' onchange='contact_load(this);'>\n";
 			echo "		<option value=''></option>\n";
 			if (is_array($contact_labels) && @sizeof($contact_labels) != 0) {
 				foreach ($contact_labels as $index => $contact_label) {

@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Portions created by the Initial Developer are Copyright (C) 2008-2025
+	Portions created by the Initial Developer are Copyright (C) 2008-2026
 	the Initial Developer. All Rights Reserved.
 
 	Contributor(s):
@@ -54,6 +54,36 @@
 		$devices = $_POST['devices'];
 	}
 
+// Set variables from http GET parameters
+	$page = is_numeric($_GET['page'] ?? '') ? $_GET['page'] : 0;
+	$order_by = preg_replace('#[^a-zA-Z0-9_\-]#', '', $_GET['order_by'] ?? '');
+	$order = ($_GET['order'] ?? '') === 'desc' ? 'desc' : 'asc';
+	$fields = $_GET['fields'] ?? '';
+	$search = $_GET['search'] ?? '';
+	$show = $_GET['show'] ?? '';
+
+// Build the query string
+	$url_params = [];
+	if (!empty($page)) {
+		$url_params['page'] = $page;
+	}
+	if (!empty($_GET['order_by'])) {
+		$url_params['order_by'] = $order_by;
+	}
+	if (!empty($_GET['order'])) {
+		$url_params['order'] = $order;
+	}
+	if (!empty($fields)) {
+		$url_params['fields'] = $fields;
+	}
+	if (!empty($search)) {
+		$url_params['search'] = $search;
+	}
+	if (!empty($show) && $show == 'all' && permission_exists('device_all')) {
+		$url_params['show'] = $show;
+	}
+	$query_string = http_build_query($url_params);
+
 //process the http post data by action
 	if (!empty($action) && !empty($devices) && is_array($devices) && @sizeof($devices) != 0) {
 		switch ($action) {
@@ -71,17 +101,9 @@
 				break;
 		}
 
-		header('Location: devices.php'.($search != '' ? '?search='.urlencode($search).'&fields='.urlencode($fields) : null));
+		header('Location: devices.php'.($query_string ? '?'.$query_string : ''));
 		exit;
 	}
-
-//get order and order by and sanatize the values
-	$order_by = $_GET["order_by"] ?? '';
-	$order = $_GET["order"] ?? '';
-
-//get the search
-	$search = strtolower($_REQUEST["search"] ?? '');
-	$fields = strtolower($_REQUEST["fields"] ?? '');
 
 //get total devices count from the database
 	$sql = "select count(*) from v_devices ";
@@ -107,7 +129,7 @@
 
 //get the count
 	$sql = "select count(*) from v_devices as d ";
-	if (isset($_GET['show']) && $_GET['show'] == "all" && permission_exists('device_all')) {
+	if ($show == "all" && permission_exists('device_all')) {
 		if (!empty($search)) {
 			$sql .= "where ";
 		}
@@ -157,24 +179,15 @@
 			$sql .= "	) ";
 		}
 		$sql .= ") ";
-		$parameters['search'] = '%'.strtolower($search).'%';
+		$parameters['search'] = '%'.lower_case($search).'%';
 	}
 	$num_rows = $database->select($sql, $parameters ?? null, 'column');
 	unset($sql, $parameters);
 
 //prepare to page the results
 	$rows_per_page = intval($settings->get('domain', 'paging', 50));
-	$param = '';
-	if ($search) {
-		$param = "&search=".$search;
-		$param .= "&fields=".$fields;
-	}
-	if (!empty($_GET['show']) && $_GET['show'] == "all" && permission_exists('device_all')) {
-		$param .= "&show=all";
-	}
-	$page = $_GET['page'] ?? 0;
-	list($paging_controls, $rows_per_page) = paging($num_rows, $param ?? '', $rows_per_page);
-	list($paging_controls_mini, $rows_per_page) = paging($num_rows, $param ?? '', $rows_per_page, true);
+	list($paging_controls, $rows_per_page) = paging($num_rows, $query_string, $rows_per_page);
+	list($paging_controls_mini, $rows_per_page) = paging($num_rows, $query_string, $rows_per_page, true);
 	$offset = $rows_per_page * $page;
 
 //set the time zone
@@ -190,7 +203,7 @@
 
 //get the list
 	$sql = "select ";
-	if (isset($_GET['show']) && $_GET['show'] == "all" && permission_exists('device_all')) {
+	if ($show == "all" && permission_exists('device_all')) {
 		$sql .= "d3.domain_name, ";
 	}
 	$sql .= "d.device_uuid, ";
@@ -218,7 +231,7 @@
 	$sql .= "to_char(timezone(:time_zone, d.device_provisioned_date), 'DD Mon YYYY') as provisioned_date_formatted, \n";
 	$sql .= "to_char(timezone(:time_zone, d.device_provisioned_date), '".$time_format."') as provisioned_time_formatted \n";
 	$sql .= "from v_devices as d, v_devices as d2 ";
-	if (isset($_GET['show']) && $_GET['show'] == "all" && permission_exists('device_all')) {
+	if ($show == "all" && permission_exists('device_all')) {
 		$sql .= ", v_domains as d3 ";
 	}
 	$sql .= "where ( ";
@@ -228,7 +241,7 @@
 	$sql .= "		d.device_uuid = d2.device_uuid ";
 	$sql .= "	) ";
 	$sql .= ") ";
-	if (isset($_GET['show']) && $_GET['show'] == "all" && permission_exists('device_all')) {
+	if ($show == "all" && permission_exists('device_all')) {
 		$sql .= " and d.domain_uuid = d3.domain_uuid ";
 	}
 	else {
@@ -277,7 +290,7 @@
 			$sql .= "	) ";
 		}
 		$sql .= ") ";
-		$parameters['search'] = '%'.strtolower($search).'%';
+		$parameters['search'] = '%'.lower_case($search).'%';
 	}
 	if (empty($order_by)) {
 		$sql .= "order by d.device_label, d.device_description asc ";
@@ -338,17 +351,17 @@
 		echo button::create(['type'=>'button','label'=>$text['button-delete'],'icon'=>$settings->get('theme', 'button_icon_delete'),'id'=>'btn_delete','name'=>'btn_delete','style'=>'display: none; '.($margin_left ?? null),'onclick'=>"modal_open('modal-delete','btn_delete');"]);
 		unset($margin_left);
 	}
-	echo 		"<form id='form_search' class='inline' method='get'>\n";
-	if (permission_exists('device_all')) {
-		if (!empty($_GET['show']) && $_GET['show'] == 'all') {
-			echo "		<input type='hidden' name='show' value='all'>";
-		}
-		else {
-			echo button::create(['type'=>'button','label'=>$text['button-show_all'],'icon'=>$settings->get('theme','button_icon_all'),'link'=>'?show=all']);
+	echo "		<form id='form_search' class='inline' method='get'>\n";
+	foreach ($url_params as $key => $value) {
+		if (in_array($key, ['order_by', 'order', 'show'])) {
+			echo "		<input type='hidden' name='".escape($key)."' value='".escape($value)."'>\n";
 		}
 	}
+	if ($show !== 'all' && permission_exists('voicemail_all')) {
+		echo button::create(['type'=>'button','label'=>$text['button-show_all'],'icon'=>$settings->get('theme','button_icon_all'),'link'=>'?show=all']);
+	}
 
-	echo 		"<select class='formfld' name='fields' id='select_fields' style='width: auto; margin-left: 15px;' onchange=\"if (document.getElementById('search').value != '') { this.form.submit(); }\">\n";
+	echo "		<select class='formfld' name='fields' id='select_fields' style='width: auto; margin-left: 15px;' onchange=\"if (document.getElementById('search').value != '') { this.form.submit(); }\">\n";
 	echo "			<option value='' selected='selected' disabled hidden>".$text['label-fields']."...</option>\n";
 	echo "			<option value=''></option>\n";
 	echo "			<option value=''>".$text['label-default']."</option>\n";
@@ -357,11 +370,11 @@
 	echo "			<option value='settings' ".($fields == 'settings' ? " selected='selected'" : null).">".$text['label-settings']."</option>\n";
 	echo "			<option value='all' ".($fields == 'all' ? " selected='selected'" : null).">".$text['label-all']."</option>\n";
 	echo "		</select>";
-	echo 		"<input type='text' class='txt list-search' name='search' id='search' style='margin-left: 0 !important;' value=\"".escape($search)."\" placeholder=\"".$text['label-search']."\" onkeydown=''>";
+	echo "		<input type='text' class='txt list-search' name='search' id='search' style='margin-left: 0 !important;' value=\"".escape($search)."\" placeholder=\"".$text['label-search']."\" onkeydown=''>";
 	echo button::create(['label'=>$text['button-search'],'icon'=>$settings->get('theme', 'button_icon_search'),'type'=>'submit','id'=>'btn_search']);
 	//echo button::create(['label'=>$text['button-reset'],'icon'=>$settings->get('theme', 'button_icon_reset'),'type'=>'button','id'=>'btn_reset','link'=>'devices.php','style'=>($search == '' ? 'display: none;' : null)]);
-	if ($paging_controls_mini != '') {
-		echo 	"<span style='margin-left: 15px;'>".$paging_controls_mini."</span>";
+	if (!empty($paging_controls_mini)) {
+		echo "	<span style='margin-left: 15px;'>".$paging_controls_mini."</span>";
 	}
 	echo "		</form>\n";
 	echo "	</div>\n";
@@ -375,13 +388,52 @@
 		echo modal::create(['id'=>'modal-delete','type'=>'delete','actions'=>button::create(['type'=>'button','label'=>$text['button-continue'],'icon'=>'check','id'=>'btn_delete','style'=>'float: right; margin-left: 15px;','collapse'=>'never','onclick'=>"modal_close(); list_action_set('delete'); list_form_submit('form_list');"])]);
 	}
 
+	//add the responsive styles
+	echo "<style>\n";
+	echo "/* small screens: let the list scroll horizontally */\n";
+	echo "@media (max-width: 767.98px) {\n";
+	echo "	div.card {\n";
+	echo "		overflow-x: auto;\n";
+	echo "		-webkit-overflow-scrolling: touch;\n";
+	echo "	}\n";
+	echo "	\n";
+	echo "	/* wrap the action bar buttons and search controls */\n";
+	echo "	div.action_bar {\n";
+	echo "		display: flex;\n";
+	echo "		flex-wrap: wrap;\n";
+	echo "		align-items: center;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.heading {\n";
+	echo "		float: none;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.actions {\n";
+	echo "		float: none;\n";
+	echo "		width: 100%;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.actions > button {\n";
+	echo "		margin: 0 8px 8px 0 !important;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.actions > form.inline {\n";
+	echo "		display: flex;\n";
+	echo "		flex-wrap: wrap;\n";
+	echo "		width: 100%;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.actions form.inline > input[type=text].list-search {\n";
+	echo "		flex: 1 1 200px;\n";
+	echo "		width: auto !important;\n";
+	echo "		min-width: 0;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.actions form.inline > span {\n";
+	echo "		width: 100%;\n";
+	echo "	}\n";
+	echo "}\n";
+	echo "</style>\n";
+
 	echo $text['description-devices']."\n";
 	echo "<br /><br />\n";
 
 	echo "<form id='form_list' method='post'>\n";
 	echo "<input type='hidden' id='action' name='action' value=''>\n";
-	echo "<input type='hidden' name='search' value=\"".escape($search)."\">\n";
-	echo "<input type='hidden' name='fields' value=\"".escape($fields)."\">\n";
 
 	echo "<div class='card'>\n";
 	echo "<table class='list'>\n";
@@ -391,20 +443,20 @@
 		echo "		<input type='checkbox' id='checkbox_all' name='checkbox_all' onclick='list_all_toggle(); checkbox_on_change(this);' ".(empty($devices) ? "style='visibility: hidden;'" : null).">\n";
 		echo "	</th>\n";
 	}
-	if (!empty($_GET['show']) && $_GET['show'] == "all" && permission_exists('device_all')) {
-		echo th_order_by('domain_name', $text['label-domain'], $order_by, $order, null, null, $param);
+	if ($show == "all" && permission_exists('device_all')) {
+		echo th_order_by('domain_name', $text['label-domain'], $order_by, $order, null, null, $query_string);
 	}
-	echo th_order_by('device_address', $text['label-device_address'], $order_by, $order, null, null, $param ?? null);
-	echo th_order_by('device_label', $text['label-device_label'], $order_by, $order, null, null, $param ?? null);
+	echo th_order_by('device_address', $text['label-device_address'], $order_by, $order, null, null, $query_string);
+	echo th_order_by('device_label', $text['label-device_label'], $order_by, $order, null, null, $query_string);
 	if ($device_alternate) {
-		echo th_order_by('device_template', $text['label-device_uuid_alternate'], $order_by, $order, null, null, $param ?? null);
+		echo th_order_by('device_template', $text['label-device_uuid_alternate'], $order_by, $order, null, null, $query_string);
 	}
-	echo th_order_by('device_vendor', $text['label-device_vendor'], $order_by, $order, null, null, $param ?? null);
-	echo th_order_by('device_template', $text['label-device_template'], $order_by, $order, null, null, $param ?? null);
-	echo "<th>". $text['label-device_profiles']."</th>\n";
-	echo th_order_by('device_enabled', $text['label-device_enabled'], $order_by, $order, null, "class='center'", $param ?? null);
-	echo th_order_by('device_provisioned_date', $text['label-device_status'], $order_by, $order, null, null, $param ?? null);
-	echo th_order_by('device_description', $text['label-device_description'], $order_by, $order, null, "class='hide-sm-dn'", $param ?? null);
+	echo th_order_by('device_vendor', $text['label-device_vendor'], $order_by, $order, null, "class='hide-sm-dn'", $query_string);
+	echo th_order_by('device_template', $text['label-device_template'], $order_by, $order, null, "class='hide-sm-dn'", $query_string);
+	echo "<th class='hide-sm-dn'>". $text['label-device_profiles']."</th>\n";
+	echo th_order_by('device_enabled', $text['label-device_enabled'], $order_by, $order, null, "class='center'", $query_string);
+	echo th_order_by('device_provisioned_date', $text['label-device_status'], $order_by, $order, null, "class='hide-sm-dn'", $query_string);
+	echo th_order_by('device_description', $text['label-device_description'], $order_by, $order, null, "class='hide-sm-dn'", $query_string);
 	if (permission_exists('device_edit') && $settings->get('theme', 'list_row_edit_button', false)) {
 		echo "	<td class='action-button'>&nbsp;</td>\n";
 	}
@@ -423,7 +475,7 @@
 
 			$list_row_url = '';
 			if (permission_exists('device_edit')) {
-				$list_row_url = "device_edit.php?id=".urlencode($row['device_uuid']);
+				$list_row_url = "device_edit.php?id=".urlencode($row['device_uuid']).($query_string ? '&'.$query_string : '');
 				if ($row['domain_uuid'] != $_SESSION['domain_uuid'] && permission_exists('domain_select')) {
 					$list_row_url .= '&domain_uuid='.urlencode($row['domain_uuid']).'&domain_change=true';
 				}
@@ -446,7 +498,7 @@
 				echo "		<input type='hidden' name='devices[$x][uuid]' value='".escape($row['device_uuid'])."' />\n";
 				echo "	</td>\n";
 			}
-			if (!empty($_GET['show']) && $_GET['show'] == "all" && permission_exists('device_all')) {
+			if ($show == "all" && permission_exists('device_all')) {
 				echo "	<td>".escape($row['domain_name'])."</td>\n";
 			}
 			echo "	<td class='no-wrap'>";
@@ -463,9 +515,9 @@
 					echo "	<td>&nbsp;</td>\n";
 				}
 			}
-			echo "	<td>".escape($row['device_vendor'])."&nbsp;</td>\n";
-			echo "	<td>".escape($row['device_template'])."&nbsp;</td>\n";
-			echo "	<td>".escape($device_profile_name)."&nbsp;</td>\n";
+			echo "	<td class='hide-sm-dn'>".escape($row['device_vendor'])."&nbsp;</td>\n";
+			echo "	<td class='hide-sm-dn'>".escape($row['device_template'])."&nbsp;</td>\n";
+			echo "	<td class='hide-sm-dn'>".escape($device_profile_name)."&nbsp;</td>\n";
 			if (permission_exists('device_edit')) {
 				echo "	<td class='no-link center'>";
 				echo button::create(['type'=>'submit','class'=>'link','label'=>$text['label-'.(!empty($row['device_enabled']) ? 'true' : 'false')],'title'=>$text['button-toggle'],'onclick'=>"list_self_check('checkbox_".$x."'); list_action_set('toggle'); list_form_submit('form_list')"]);
@@ -475,7 +527,7 @@
 				echo $text['label-'.(!empty($row['device_enabled']) ? 'true' : 'false')];
 			}
 			echo "	</td>\n";
-			echo "	<td class='no-link'><a title='".escape($row['device_provisioned_agent'])."' href='javascript:void(0)'>".escape($row['provisioned_date_formatted'])." ".escape($row['provisioned_time_formatted'])."</a> &nbsp; ".escape($device_provisioned_method)." &nbsp; <a href='".escape($device_provisioned_method)."://".escape($row['device_provisioned_ip'])."' target='_blank'>".escape($row['device_provisioned_ip'])."</a>&nbsp;</td>\n";
+			echo "	<td class='no-link hide-sm-dn'><a title='".escape($row['device_provisioned_agent'])."' href='javascript:void(0)'>".escape($row['provisioned_date_formatted'])." ".escape($row['provisioned_time_formatted'])."</a> &nbsp; ".escape($device_provisioned_method)." &nbsp; <a href='".escape($device_provisioned_method)."://".escape($row['device_provisioned_ip'])."' target='_blank'>".escape($row['device_provisioned_ip'])."</a>&nbsp;</td>\n";
 			echo "	<td class='description overflow hide-sm-dn'>".escape($row['device_description'])."&nbsp;</td>\n";
 			if (permission_exists('device_edit')  && $settings->get('theme', 'list_row_edit_button', false)) {
 				echo "	<td class='action-button'>";

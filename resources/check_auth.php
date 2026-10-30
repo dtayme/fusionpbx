@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Portions created by the Initial Developer are Copyright (C) 2008-2025
+	Portions created by the Initial Developer are Copyright (C) 2008-2026
 	the Initial Developer. All Rights Reserved.
 
 	Contributor(s):
@@ -31,7 +31,7 @@
 	$language = new text;
 	$text = $language->get(null, 'resources');
 
-//for compatibility require this library if less than version 5.5
+//for compatibility, require this library if less than version 5.5
 	if (version_compare(phpversion(), '5.5', '<')) {
 		require_once "resources/functions/password.php";
 	}
@@ -43,17 +43,17 @@
 		}
 	}
 
-//regenerate sessions to avoid session id attacks such as session fixation
+//regenerate sessions to avoid session ID attacks, such as session fixation
 	if (isset($_SESSION['authorized']) && $_SESSION['authorized']) {
 		//set the last activity time
 		$_SESSION['session']['last_activity'] = time();
 
-		//if session created is not set then set the time
+		//if the session created is not set, then set the time
 		if (!isset($_SESSION['session']['created'])) {
 			$_SESSION['session']['created'] = time();
 		}
 
-		//check the elapsed time if exceeds limit then rotate the session
+		//check the elapsed time if it exceeds the limit, then rotate the session
 		if (time() - $_SESSION['session']['created'] > 900) {
 
 			//build the user log array
@@ -63,7 +63,7 @@
 			$log_array['user_uuid'] = $_SESSION['user']['user_uuid'];
 			$log_array['authorized'] = true;
 
-			//session started more than 15 minutes
+			//session started more than 15 minutes ago
 			session_regenerate_id(true);
 
 			// update creation time
@@ -89,7 +89,7 @@
 //define variables
 	if (!isset($_SESSION['template_content'])) { $_SESSION["template_content"] = null; }
 
-//if session authorized is not set then set the default value to false
+//if session authorized is not set, then set the default value to false
 	if (!isset($_SESSION['authorized'])) {
 		$_SESSION['authorized'] = false;
 	}
@@ -109,9 +109,10 @@
 	if ($_SESSION['authorized'] && $_SESSION["user_hash"] !== hash('sha256', implode($server_array))) {
 		session_destroy();
 		header("Location: ".PROJECT_PATH."/logout.php");
+		exit;
 	}
 
-//if the session is not authorized then verify the identity
+//if the session is not authorized, then verify the identity
 	if (!$_SESSION['authorized']) {
 
 		//clear the template only if the template has not been assigned by the superadmin
@@ -127,7 +128,9 @@
 			if (empty($_SESSION['authorized']) || !$_SESSION['authorized']) {
 				//log the failed auth attempt to the system to the syslog server
 				openlog('FusionPBX', LOG_NDELAY, LOG_AUTH);
-				syslog(LOG_WARNING, '['.$_SERVER['REMOTE_ADDR']."] authentication failed for ".$result["username"]);
+				//strip newlines/tabs to prevent log injection
+				$failed_username = preg_replace('/[\r\n\t]/', '', (string)($result["username"] ?? ''));
+				syslog(LOG_WARNING, '['.$_SERVER['REMOTE_ADDR']."] authentication failed for ".$failed_username);
 				closelog();
 
 				//redirect the user to the login page
@@ -145,19 +148,24 @@
 			settings::clear_cache();
 
 		//if logged in, redirect to login destination
-			if (!isset($_REQUEST["key"])) {
-
-				//connect to the settings object
-				$settings = new settings(['database' => $database, 'domain_uuid' => $domain_uuid, 'user_uuid' => $user_uuid]);
-
+			if (!isset($_REQUEST["key"]) && !isset($_COOKIE['remember_me'])) {
 				//redirect the user
 				if (isset($_SESSION['redirect_path'])) {
-					$redirect_path = $_SESSION['redirect_path'];
+					$redirect_path = (string)$_SESSION['redirect_path'];
 					unset($_SESSION['redirect_path']);
 
-					// prevent open redirect attacks. redirect url shouldn't contain a hostname
-					$parsed_url = parse_url($redirect_path);
-					if ($parsed_url['host']) {
+					//prevent open redirect attacks: only allow a relative path on the same site
+					$parsed_url = @parse_url($redirect_path);
+					$is_safe_redirect = (
+						$redirect_path !== '' &&
+						$redirect_path[0] === '/' &&
+						strpos($redirect_path, '//') === false &&
+						strpos($redirect_path, '\\') === false &&
+						preg_match('/[\x00-\x1f\x7f]/', $redirect_path) === 0 &&
+						!isset($parsed_url['scheme']) &&
+						!isset($parsed_url['host'])
+					);
+					if (!$is_safe_redirect) {
 						die("Was someone trying to hack you?");
 					}
 					header("Location: ".$redirect_path);

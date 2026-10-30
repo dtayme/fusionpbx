@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Portions created by the Initial Developer are Copyright (C) 2008-2019
+	Portions created by the Initial Developer are Copyright (C) 2008-2026
 	the Initial Developer. All Rights Reserved.
 
 	Contributor(s):
@@ -27,10 +27,19 @@
 //process this only one time
 	if ($domains_processed == 1) {
 
-		//default settings - change the type from var to text
+		//default settings - change the type from var or name to text
 			$sql = "update v_default_settings ";
 			$sql .= "set default_setting_name = 'text' ";
-			$sql .= "where default_setting_name = 'var' ";
+			$sql .= "where (default_setting_name = 'var' or default_setting_name = 'name') ";
+			$database->execute($sql, null);
+			unset($sql);
+
+		//default settings - change the type from enhanced to default
+			$sql = "update v_default_settings ";
+			$sql .= "set default_setting_value = 'default' ";
+			$sql .= "where default_setting_category = 'domain' ";
+			$sql .= "and default_setting_subcategory = 'template' ";
+			$sql .= "and default_setting_value = 'enhanced' ";
 			$database->execute($sql, null);
 			unset($sql);
 
@@ -512,6 +521,22 @@
 			$sql .= "where default_setting_category = 'editor' ";
 			$sql .= "and default_setting_subcategory in ('invisibles', 'indent_guides', 'line_numbers') ";
 			$sql .= "and default_setting_name = 'boolean' ";
+			$database->execute($sql);
+			unset($sql);
+
+		// Delete setting_value_input_type
+			$sql = "delete from v_default_settings ";
+			$sql .= "where default_setting_category = 'domain' ";
+			$sql .= "and default_setting_subcategory = 'setting_value_input_type' ";
+			$database->execute($sql);
+			unset($sql);
+
+		//default settings - change from passkey_position to options_position
+			$sql = "update v_default_settings ";
+			$sql .= "set default_setting_subcategory = 'options_position', ";
+			$sql .= "default_setting_description = 'Position of the extra options on the login form. Options: inside, outside.' ";
+			$sql .= "where default_setting_uuid = 'c3d4e5f6-7a8b-4c9d-a0b1-2c3d4e5f6a7b' ";
+			$sql .= "and default_setting_category = 'login' ";
 			$database->execute($sql);
 			unset($sql);
 

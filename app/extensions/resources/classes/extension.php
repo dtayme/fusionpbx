@@ -742,9 +742,9 @@ class extension {
 					//clear the cache
 					foreach ($extensions as $x => $extension) {
 						$cache = new cache;
-						$cache->delete(gethostname() . ":directory:" . $extension['extension'] . "@" . $extension['user_context']);
+						$cache->delete("directory:" . $extension['extension'] . "@" . $extension['user_context']);
 						if (permission_exists('number_alias') && !empty($extension['number_alias'])) {
-							$cache->delete(gethostname() . ":directory:" . $extension['number_alias'] . "@" . $extension['user_context']);
+							$cache->delete("directory:" . $extension['number_alias'] . "@" . $extension['user_context']);
 						}
 					}
 					unset($extensions);
@@ -835,7 +835,6 @@ class extension {
 					$p->add('extension_edit', 'temp');
 
 					//save the array
-
 					$this->database->save($array);
 					unset($array);
 
@@ -850,18 +849,17 @@ class extension {
 					//write the provision files
 					if (!empty($this->settings->get('provision', 'path'))) {
 						if (is_dir(dirname(__DIR__, 4) . '/app/provision')) {
-							$prov              = new provision;
-							$prov->domain_uuid = $this->domain_uuid;
-							$response          = $prov->write();
+							$prov = new provision(['settings'=>$this->settings, 'domain_uuid'=>$this->domain_uuid, 'domain_name'=>$this->domain_name, 'user_uuid'=>$this->user_uuid]);
+							$response = $prov->write();
 						}
 					}
 
 					//clear the cache
 					foreach ($extensions as $uuid => $extension) {
 						$cache = new cache;
-						$cache->delete(gethostname() . ":directory:" . $extension['extension'] . "@" . $extension['user_context']);
+						$cache->delete("directory:" . $extension['extension'] . "@" . $extension['user_context']);
 						if (permission_exists('number_alias') && !empty($extension['number_alias'])) {
-							$cache->delete(gethostname() . ":directory:" . $extension['number_alias'] . "@" . $extension['user_context']);
+							$cache->delete("directory:" . $extension['number_alias'] . "@" . $extension['user_context']);
 						}
 					}
 					unset($extensions);

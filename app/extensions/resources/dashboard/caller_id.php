@@ -117,7 +117,7 @@
 				//clear the cache
 					$cache = new cache;
 					foreach($_SESSION['user']['extension'] as $field) {
-						$cache->delete(gethostname().":directory:".$field['destination']."@".$field['user_context']);
+						$cache->delete("directory:".$field['destination']."@".$field['user_context']);
 					}
 
 				//set the message
@@ -179,7 +179,7 @@
 				echo "<div class='hud_chart' style='width: 275px;'><canvas id='caller_id_chart'></canvas></div>\n";
 
 				echo "<script>\n";
-				echo "	const caller_id_chart = new Chart(\n";
+				echo "	window.caller_id_chart = new Chart(\n";
 				echo "		document.getElementById('caller_id_chart').getContext('2d'),\n";
 				echo "		{\n";
 				echo "			type: 'doughnut',\n";
@@ -233,6 +233,9 @@
 				echo "			}]\n";
 				echo "		}\n";
 				echo "	);\n";
+				echo "	if (window.caller_id_chart.tooltip) {\n";
+				echo "		window.caller_id_chart.tooltip._chart = window.caller_id_chart;\n";
+				echo "	}\n";
 				echo "</script>\n";
 			}
 			if ($widget_chart_type == "number") {

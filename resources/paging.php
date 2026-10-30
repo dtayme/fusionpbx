@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Portions created by the Initial Developer are Copyright (C) 2008-2019
+	Portions created by the Initial Developer are Copyright (C) 2008-2026
 	the Initial Developer. All Rights Reserved.
 
 	Contributor(s):
@@ -58,12 +58,14 @@ function paging($num_rows, $param, $rows_per_page, $mini = false, $result_count 
 	//sanitize the parameters
 	$sanitized_parameters = '';
 	if (isset($param) && !empty($param)) {
+		$param = trim($param, '&');
 		$param_array = explode("&", $param);
 		if (is_array($param_array)) {
 			foreach ($param_array as $row) {
 				$param_sub_array = explode("=", $row);
-				$key = preg_replace('#[^a-zA-Z0-9_\-]#', '', $param_sub_array['0']);
+				$key = preg_replace('#[^a-zA-Z0-9_\-[]]#', '', $param_sub_array['0']);
 				$value = urldecode($param_sub_array['1'] ?? '');
+				if ($key === 'page') continue;
 				if ($key === 'order_by' && !empty($value)) {
 					//validate order by
 					$sanitized_parameters .= "&order_by=" . preg_replace('#[^a-zA-Z0-9_\-]#', '', $value);
@@ -197,3 +199,4 @@ function paging($num_rows, $param, $rows_per_page, $mini = false, $result_count 
 	return $array;
 
 }
+ 

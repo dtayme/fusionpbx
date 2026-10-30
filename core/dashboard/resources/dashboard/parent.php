@@ -69,7 +69,7 @@
 
 <style>
 
-div.parent_widget {
+.parent_widget > .hud_box > .hud_content {
 	max-width: 100%;
 	margin: 0 auto;
 	display: grid;
@@ -100,6 +100,10 @@ div.child_widget div.hud_chart  {
 	padding: 7px;
 }
 
+div.child_widget .hud_expander  {
+	display: none;
+}
+
 /* dashboard settings */
 <?php
 foreach ($child_widgets as $row) {
@@ -120,9 +124,9 @@ foreach ($child_widgets as $row) {
 
 <?php
 
-//include the dashboards
+//include the widgets
 	echo "<div class='hud_box'>\n";
-	echo "	<div class='hud_content parent_widget'>\n";
+	echo "	<div class='hud_content'>\n";
 
 	$x = 0;
 	foreach ($child_widgets as $row) {
@@ -179,7 +183,7 @@ foreach ($child_widgets as $row) {
 		$path_array = glob(dirname(__DIR__, 4).'/*/'.$application_name.'/resources/dashboard/'.$child_widget_name.'.php');
 
 		echo "<div class='child_widget ".$widget_details_state."' id='".$widget_id."' draggable='false'>\n";
-		if (file_exists($path_array[0])) {
+		if (!empty($path_array[0]) && file_exists($path_array[0])) {
 			include $path_array[0];
 		}
 		echo "</div>\n";

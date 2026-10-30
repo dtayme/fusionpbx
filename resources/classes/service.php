@@ -122,7 +122,7 @@ abstract class service {
 	 * calling another method from the constructor) will fail to register the signal handlers.</p>
 	 */
 	protected function __construct() {
-		openlog('[php][' . self::class . ']', LOG_CONS | LOG_NDELAY | LOG_PID, LOG_DAEMON);
+		openlog('[php][' . static::class . ']', LOG_CONS | LOG_NDELAY | LOG_PID, LOG_DAEMON);
 	}
 
 	/**
@@ -134,13 +134,15 @@ abstract class service {
 
 	/**
 	 * Sends a shutdown signal to the running process.
+	 *
+	 * @return bool True if the signals were sent successfully, false if no service is running
 	 */
-	public static function send_shutdown() {
+	public static function send_shutdown(): bool {
 		if (self::is_any_running()) {
-			self::send_signal(SIGTERM);
-		} else {
-			die("Service Not Started\n");
+			return self::send_signal(15);	// SIGTERM
 		}
+
+		return false;
 	}
 
 	/**
@@ -166,30 +168,17 @@ abstract class service {
 	 * 'service' command as root user. It is possible to start the
 	 * service with user www-data and then the web UI would in fact
 	 * be able to send the reload signal to the running service.</p>
+	 *
+	 * @param int $posix_signal The POSIX signal to send.
+	 *
+	 * @return bool True if the signal was sent successfully, false otherwise.
 	 */
-	public static function send_signal($posix_signal) {
-		$signal_name = "";
-		switch ($posix_signal) {
-			case 1:   //SIGHUP
-			case 10:  //SIGUSR1
-				$signal_name = "Reload";
-				break;
-			case 12:  //SIGUSR2
-			case 15:  //SIGTERM
-				$signal_name = "Shutdown";
-				break;
-		}
+	public static function send_signal(int $posix_signal): bool {
 		$pid = self::get_service_pid();
-		if ($pid === false) {
-			self::log("service not running", LOG_EMERG);
-		} else {
-			if (posix_kill((int)$pid, $posix_signal)) {
-				echo "Sent $signal_name\n";
-			} else {
-				$err = posix_strerror(posix_get_last_error());
-				echo "Failed to send $signal_name: $err\n";
-			}
+		if ($pid !== false && posix_kill((int)$pid, (int)$posix_signal)) {
+			return true;
 		}
+		return false;
 	}
 
 	/**
@@ -227,15 +216,13 @@ abstract class service {
 	/**
 	 * Sends a reload signal to running services, or exits if no service is running.
 	 *
-	 * @return void
+	 * @return bool True if the reload signal was sent successfully, false if no service is running
 	 */
-	public static function send_reload() {
+	public static function send_reload(): bool {
 		if (self::is_any_running()) {
-			self::send_signal(10);
-		} else {
-			die("Service Not Started\n");
+			return self::send_signal(10);  // SIGUSR1
 		}
-		exit();
+		return false;
 	}
 
 	/**
@@ -322,6 +309,14 @@ abstract class service {
 
 		//parse the cli options and store them statically
 		self::parse_service_command_options();
+
+		// When running as root, prepare the PID directory before privileges
+		// are dropped. On systems such as FreeBSD, /var/run is owned by root
+		// and is not world writable, so the unprivileged service would be
+		// unable to create its PID file afterwards.
+		if (posix_geteuid() === 0) {
+			self::prepare_pid_directory();
+		}
 
 		// If a group name is specified, then run the service under this group
 		if (self::$posix_groupname !== null) {
@@ -452,10 +447,6 @@ abstract class service {
 		}
 	}
 
-	//
-	//
-	//
-
 	/**
 	 * Returns an array of base command options.
 	 *
@@ -505,6 +496,7 @@ abstract class service {
 		$help_options[$index]['short_description'] = '-r';
 		$help_options[$index]['long_description'] = '--reload';
 		$help_options[$index]['functions'][] = 'send_reload';
+		$help_options[$index]['functions'][] = 'shutdown';
 		$index++;
 		$help_options[$index]['short_option'] = 'd:';
 		$help_options[$index]['long_option'] = 'debug:';
@@ -684,6 +676,58 @@ abstract class service {
 	}
 
 	/**
+	 * Ensures the PID directory exists and is owned by the user the service
+	 * will drop to when running as root.
+	 *
+	 * On systems such as FreeBSD, /var/run is owned by root and is not world
+	 * writable, so the PID directory must be created and assigned to the
+	 * unprivileged user before the privileges are dropped. This is a no-op
+	 * when the service does not drop privileges.
+	 *
+	 * @return void
+	 */
+	private static function prepare_pid_directory() {
+		$pid_directory = dirname(self::$pid_file);
+		if ($pid_directory === '' || $pid_directory === false) {
+			return;
+		}
+
+		// Create the directory when it does not exist
+		if (!file_exists($pid_directory)) {
+			if (!mkdir($pid_directory, 0777, true)) {
+				self::log("Failed to create PID directory " . $pid_directory, LOG_ERR);
+				return;
+			}
+		}
+
+		// Resolve the user and group the service will drop to
+		$uid = null;
+		$gid = null;
+		if (self::$posix_username !== null) {
+			$user_record = posix_getpwnam(self::$posix_username);
+			if ($user_record !== false) {
+				$uid = $user_record['uid'];
+			}
+		}
+		if (self::$posix_groupname !== null) {
+			$group_record = posix_getgrnam(self::$posix_groupname);
+			if ($group_record !== false) {
+				$gid = $group_record['gid'];
+			}
+		}
+
+		// Give the service user ownership of the PID directory so it can
+		// create and remove its PID file after the privileges are dropped
+		if ($uid !== null && $gid !== null) {
+			if (!chown($pid_directory, $uid) || !chgrp($pid_directory, $gid)) {
+				self::log("Failed to change ownership of PID directory " . $pid_directory, LOG_ERR);
+				return;
+			}
+			chmod($pid_directory, 0777);
+		}
+	}
+
+	/**
 	 * Creates the service directory to store the PID
 	 *
 	 * @return void
@@ -696,6 +740,14 @@ abstract class service {
 			if (!$result) {
 				throw new Exception('Failed to create /var/run/fusionpbx');
 			}
+		}
+
+		// The directory may exist but be owned by another user, for example
+		// after a reboot on FreeBSD where /var/run is a root owned tmpfs and
+		// the service was started without root privileges. Fail with an
+		// actionable message instead of a cryptic PID file write error.
+		if (!is_writable('/var/run/fusionpbx')) {
+			throw new Exception("PID directory /var/run/fusionpbx is not writable by user " . self::$user_name . ". Run: chown " . self::$user_name . ":" . self::$group_name . " /var/run/fusionpbx");
 		}
 	}
 
@@ -1019,7 +1071,7 @@ abstract class service {
 	/**
 	 * Child classes must provide a mechanism to reload settings
 	 */
-	abstract protected function reload_settings(): void;
+	abstract public function reload_settings(): void;
 
 	/**
 	 * Logs a message at the DEBUG level.
@@ -1153,7 +1205,7 @@ abstract class service {
 //
 class simple_example extends service {
 
-	protected function reload_settings(): void {
+	public function reload_settings(): void {
 
 	}
 
@@ -1206,7 +1258,7 @@ class child_service extends service {
 	//
 	// This function is required from the base service class because it is used when the reload command line option is used
 	//
-	protected function reload_settings(): void {
+	public function reload_settings(): void {
 		//informing the user in this example is simple but can use the parent class log functions
 		echo "Reloading settings\n";
 

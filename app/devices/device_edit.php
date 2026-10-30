@@ -19,7 +19,6 @@
 	Mark J Crane <markjcrane@fusionpbx.com>
 	Portions created by the Initial Developer are Copyright (C) 2008-2026
 	the Initial Developer. All Rights Reserved.
-
 */
 
 //includes files
@@ -32,6 +31,9 @@
 		exit;
 	}
 
+//define global variable(s)
+	global $database;
+
 //add multi-lingual support
 	$language = new text;
 	$text = $language->get();
@@ -39,7 +41,7 @@
 //set the defaults
 	$device_model = '';
 	$device_firmware_version = '';
-	$device_template ='';
+	$device_template = '';
 
 //get the domain values
 	$domain_uuid = $_SESSION['domain_uuid'] ?? '';
@@ -58,6 +60,36 @@
 		$device_uuid = uuid();
 	}
 
+// Set variables from http GET parameters
+	$page = is_numeric($_GET['page'] ?? '') ? $_GET['page'] : 0;
+	$order_by = preg_replace('#[^a-zA-Z0-9_\-]#', '', $_GET['order_by'] ?? '');
+	$order = ($_GET['order'] ?? '') === 'desc' ? 'desc' : 'asc';
+	$fields = $_GET['fields'] ?? '';
+	$search = $_GET['search'] ?? '';
+	$show = $_GET['show'] ?? '';
+
+// Build the query string
+	$url_params = [];
+	if (!empty($page)) {
+		$url_params['page'] = $page;
+	}
+	if (!empty($_GET['order_by'])) {
+		$url_params['order_by'] = $order_by;
+	}
+	if (!empty($_GET['order'])) {
+		$url_params['order'] = $order;
+	}
+	if (!empty($fields)) {
+		$url_params['fields'] = $fields;
+	}
+	if (!empty($search)) {
+		$url_params['search'] = $search;
+	}
+	if (!empty($show) && $show == 'all' && permission_exists('device_all')) {
+		$url_params['show'] = $show;
+	}
+	$query_string = http_build_query($url_params);
+
 //get the total device count from the database, check the limit, if defined
 	if ($action == 'add' && $settings->get('limit', 'devices', '') != '') {
 		$sql = "select count(*) from v_devices where domain_uuid = :domain_uuid ";
@@ -65,7 +97,7 @@
 		$total_devices = $database->select($sql, $parameters, 'column');
 		if ($total_devices >= $settings->get('limit', 'devices', '')) {
 			message::add($text['message-maximum_devices'].' '.$settings->get('limit', 'devices', ''), 'negative');
-			header('Location: devices.php');
+			header('Location: devices.php'.($query_string ? '?'.$query_string : ''));
 			exit;
 		}
 		unset($sql, $parameters, $total_devices);
@@ -88,7 +120,7 @@
 						break;
 				}
 
-				header('Location: devices.php');
+				header('Location: devices.php'.($query_string ? '?'.$query_string : ''));
 				exit;
 			}
 
@@ -179,7 +211,7 @@
 			$token = new token;
 			if (!$token->validate($_SERVER['PHP_SELF'])) {
 				message::add($text['message-invalid_token'],'negative');
-				header('Location: devices.php');
+				header('Location: devices.php'.($query_string ? '?'.$query_string : ''));
 				exit;
 			}
 
@@ -226,7 +258,7 @@
 				if ($device_domain_name != '') {
 					$message = $text['message-duplicate'].($device_domain_name != $domain_name ? ": ".$device_domain_name : null);
 					message::add($message,'negative');
-					header('Location: devices.php');
+					header('Location: devices.php'.($query_string ? '?'.$query_string : ''));
 					exit;
 				}
 				unset($sql, $parameters, $device_domain_name);
@@ -435,6 +467,22 @@
 						}
 					}
 
+				//update device key ids if drag and drop was used
+					if (!empty($_POST['device_key_ids'])) {
+						$device_key_ids = explode(",", $_POST["device_key_ids"]);
+
+						foreach ($device_key_ids as $device) {
+							list($key_uuid, $key_id) = explode("|", $device);
+
+							foreach ($array['devices'][0]['device_keys'] as &$key) {
+								if ($key['device_key_uuid'] == $key_uuid) {
+									$key['device_key_id'] = $key_id;
+									break;
+								}
+							}
+							unset($key);
+						}
+					}
 
 				//save the device
 					$database->save($array);
@@ -477,9 +525,9 @@
 
 				//write the provision files
 					if (!empty($settings->get('provision', 'path'))) {
-						$prov = new provision(['settings' => $settings]);
-						$prov->domain_uuid = $domain_uuid;
-						$response = $prov->write();
+						$prov = new provision(['settings'=>$settings, 'domain_uuid'=>$domain_uuid, 'domain_name'=>$domain_name, 'user_uuid'=>$_SESSION['user_uuid']]);
+						$prov->device_uuid = $device_uuid;
+						$prov->write();
 					}
 
 				//set the message
@@ -493,7 +541,7 @@
 							message::add($text['message-update']);
 						}
 						//redirect the browser
-						header("Location: device_edit.php?id=".urlencode($device_uuid));
+						header("Location: device_edit.php?id=".urlencode($device_uuid).($query_string ? '&'.$query_string : ''));
 						exit;
 					}
 
@@ -747,7 +795,7 @@
 			if ($_SERVER['HTTPS'] == 'on') { $_SERVER['HTTP_PROTOCOL'] = 'https'; }
 			if ($_SERVER['SERVER_PORT'] == '443') { $_SERVER['HTTP_PROTOCOL'] = 'https'; }
 		}
-		echo "		window.location = '".$_SERVER['HTTP_PROTOCOL']."://".$provision_domain_name.PROJECT_PATH."/app/provision/index.php?address=".escape($device_address ?? '')."&file=' + d + '&content_type=application/octet-stream';\n";
+		echo "		window.location = '".$_SERVER['HTTP_PROTOCOL']."://".$provision_domain_name.PROJECT_PATH."/app/provision/index.php?address=".urlencode($device_address ?? '')."&file=' + d + '&content_type=application/octet-stream';\n";
 		echo "	}\n";
 
 		echo "\n";
@@ -917,19 +965,19 @@
 		//build content for linphone
 		if ($device_template == "linphone/default") {
 			$auth_string = '';
-			
+
 			$http_auth_password = $settings->get('provision', 'http_auth_password', '');
-			
+
 			if (is_array($http_auth_password)) {
 				$http_auth_password = $http_auth_password[0];
 			}
-			
+
 			$http_auth_username = $settings->get('provision', 'http_auth_username', '');
-			
+
 			if ($settings->get('provision', 'http_auth_enabled', true) && !empty($http_auth_username) && !empty($http_auth_password)) {
 				$auth_string = $http_auth_username.':'.$http_auth_password.'@';
 			}
-			$content = "https://".$auth_string.$provision_domain_name.'/app/provision/index.php?address='.$device_address;
+			$content = "https://".$auth_string.$provision_domain_name.'/app/provision/index.php?address='.urlencode($device_address);
 		}
 
 		//stream the file
@@ -995,6 +1043,16 @@
 			echo "		box-shadow: 0px 1px 20px #888;\n";
 			echo "		border: 50px solid #fff;\n";
 			echo "	}\n";
+			echo "	@media (max-width: 575.98px) {\n";
+			echo "		div#image-container {\n";
+			echo "			padding: 10px;\n";
+			echo "		}\n";
+			echo "		img#qr_code {\n";
+			echo "			min-width: 0;\n";
+			echo "			margin: 20px auto;\n";
+			echo "			border: 10px solid #fff;\n";
+			echo "		}\n";
+			echo "	}\n";
 			echo "</style>";
 			echo "<div id='image-container' onclick='fade_out(this);'>\n";
 			echo "	<img id='qr_code' src='data:image/jpeg;base64,".base64_encode($image)."'>\n";
@@ -1015,11 +1073,77 @@
 //show the content
 	echo "<form name='frm' id='frm' method='post'>\n";
 	echo "<input type='hidden' name='file_action' id='file_action' value='' />\n";
+	echo "<input type='hidden' name='search' id='search' value=\"".($search ?? '')."\" />\n";
+
+	//add the responsive styles
+	echo "<style>\n";
+	echo "/* small screens: wrap the action bar buttons and let the card scroll horizontally */\n";
+	echo "@media (max-width: 767.98px) {\n";
+	echo "	div.action_bar {\n";
+	echo "		display: flex;\n";
+	echo "		flex-wrap: wrap;\n";
+	echo "		align-items: center;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.heading {\n";
+	echo "		float: none;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.actions {\n";
+	echo "		float: none;\n";
+	echo "		width: 100%;\n";
+	echo "	}\n";
+	echo "	div.action_bar > div.actions > button {\n";
+	echo "		margin: 0 8px 8px 0 !important;\n";
+	echo "	}\n";
+	echo "	div.card {\n";
+	echo "		overflow-x: auto;\n";
+	echo "		-webkit-overflow-scrolling: touch;\n";
+	echo "	}\n";
+	echo "}\n";
+	echo "/* extra small screens: stack each label above its field and let the wide tables scroll */\n";
+	echo "@media (max-width: 575.98px) {\n";
+	echo "	#device_edit_table {\n";
+	echo "		display: block;\n";
+	echo "		width: 100%;\n";
+	echo "	}\n";
+	echo "	#device_edit_table > tr {\n";
+	echo "		display: block;\n";
+	echo "		width: 100%;\n";
+	echo "	}\n";
+	echo "	#device_edit_table > tr > td {\n";
+	echo "		display: block;\n";
+	echo "		width: 100% !important;\n";
+	echo "		box-sizing: border-box;\n";
+	echo "		white-space: normal;\n";
+	echo "		overflow-x: auto;\n";
+	echo "		-webkit-overflow-scrolling: touch;\n";
+	echo "	}\n";
+	echo "	#device_edit_table > tr > td.vncell,\n";
+	echo "	#device_edit_table > tr > td.vncellreq {\n";
+	echo "		font-weight: bold;\n";
+	echo "		padding: 10px 0 0 0;\n";
+	echo "	}\n";
+	echo "	#device_edit_table > tr > td.vtable {\n";
+	echo "		padding: 0 0 10px 0;\n";
+	echo "	}\n";
+	echo "	#device_edit_table > tr > td > input.formfld,\n";
+	echo "	#device_edit_table > tr > td > select.formfld {\n";
+	echo "		width: 100%;\n";
+	echo "		max-width: 100%;\n";
+	echo "	}\n";
+	echo "	#device_edit_table .template_select_container {\n";
+	echo "		float: none;\n";
+	echo "		width: 100%;\n";
+	echo "	}\n";
+	echo "	#device_edit_table .device_image {\n";
+	echo "		max-width: 200px;\n";
+	echo "	}\n";
+	echo "}\n";
+	echo "</style>\n";
 
 	echo "<div class='action_bar' id='action_bar'>\n";
 	echo "	<div class='heading'><b>".$text['header-device']."</b></div>\n";
 	echo "	<div class='actions'>\n";
-	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back', ''),'id'=>'btn_back','link'=>'devices.php']);
+	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back', ''),'id'=>'btn_back','link'=>'devices.php'.($query_string ? '?'.$query_string : '')]);
 	if ($action == 'update') {
 		$button_margin = 'margin-left: 15px;';
 		if (permission_exists("device_line_password") && $qr_code_enabled) {
@@ -1032,8 +1156,7 @@
 		}
 		if (permission_exists("device_files")) {
 			//get the template directory
-				$prov = new provision(['settings' => $settings]);
-				$prov->domain_uuid = $domain_uuid;
+				$prov = new provision(['settings'=>$settings, 'domain_uuid'=>$domain_uuid, 'domain_name'=>$domain_name, 'user_uuid'=>$_SESSION['user_uuid']]);
 				$template_dir = $prov->template_dir;
 				$files = glob($template_dir.'/'.$device_template.'/*');
 			//add file buttons and the file list
@@ -1042,12 +1165,14 @@
 				echo "			<option value=''>".$text['label-download']."</option>\n";
 				foreach ($files as $file) {
 					//format the device address
-						$address = $prov->format_address($device_address, $device_vendor);
+					$address = $prov->format_address($device_address, $device_vendor);
+
 					//render the file name
-						$file_name = str_replace("{\$address}", $address, basename($file));
-						$file_name = str_replace("{\$mac}", $address, basename($file_name));
+					$file_name = str_replace("{\$address}", $address, basename($file));
+					$file_name = str_replace("{\$mac}", $address, basename($file_name));
+
 					//add the select option
-						echo "		<option value='".basename($file)."'>".$file_name."</option>\n";
+					echo "		<option value='".basename($file)."'>".$file_name."</option>\n";
 				}
 				echo "		</select>";
 				unset($button_margin);
@@ -1101,7 +1226,7 @@
 	echo "<br /><br />\n";
 
 	echo "<div class='card'>\n";
-	echo "<table width='100%' border='0' cellpadding='0' cellspacing='0'>\n";
+	echo "<table id='device_edit_table' width='100%' border='0' cellpadding='0' cellspacing='0'>\n";
 
 	echo "<tr>\n";
 	echo "<td class='vncellreq' width='30%' valign='top' align='left' nowrap='nowrap'>\n";
@@ -1148,11 +1273,11 @@
 		echo "<div class='template_select_container'>";
 		$device = new device;
 		$template_dir = $device->get_template_dir();
-		echo "	<select id='device_template' name='device_template' class='formfld' style='float: left;'>\n";
+		echo "	<select id='device_template' name='device_template' class='formfld searchable_select'>\n";
 		echo "		<option value=''></option>\n";
 		if (is_dir($template_dir) && @is_array($device_vendors)) {
 			foreach ($device_vendors as $row) {
-				echo "		<optgroup label='".escape($row["name"])."'>\n";
+				echo "		<optgroup label='".escape(ucwords($row["name"]))."'>\n";
 				if (file_exists($template_dir.'/'.$row["name"])) {
 					$templates = scandir($template_dir.'/'.$row["name"]);
 					if (is_array($templates) && @sizeof($templates) != 0) {
@@ -1176,10 +1301,8 @@
 			}
 		}
 		echo "	</select>\n";
-		echo "	<span style='float: left; clear: left;'";
 		echo "	<br />\n";
 		echo "	".$text['description-device_template']."\n";
-		echo "	</span>";
 		echo "</div>";
 		echo "
 		<style>
@@ -1581,19 +1704,24 @@
 		foreach ($device_keys as $row) {
 			//set the column names
 				if ((empty($row['device_key_vendor']) || empty($previous_device_key_vendor) || $previous_device_key_vendor != $row['device_key_vendor']) && !$device_keys_generic_header_displayed) {
+					echo "		</tbody>\n";
+					echo "		<tbody class='".(!empty($row['device_key_uuid']) ? 'sortable' : null)."'>\n";
 					echo "			<tr>\n";
 					echo "				<td class='vtable'>".$text['label-device_key_category']."</td>\n";
 					if (permission_exists('device_key_id')) {
 						echo "				<td class='vtable'>".$text['label-device_key_id']."</td>\n";
 					}
 					if ($vendor_count > 1 && !empty($row['device_key_vendor'])) {
-						echo "				<td class='vtable'><i>".ucwords($row['device_key_vendor'])."</i></td>\n";
+						// echo "				<td class='vtable'><i>".ucwords($row['device_key_vendor'])."</i></td>\n";
+						echo "				<td class='vtable'>".$text['label-device_vendor']."</td>\n";
+						echo "				<td class='vtable'>".$text['label-device_key_type']."</td>\n";
 						if ($show_key_subtype) {
 							echo "				<td class='vtable'>".$text['label-device_key_subtype']."</td>\n";
 						}
 					}
 					else {
 						$device_keys_generic_header_displayed = true;
+						echo "				<td class='vtable'>".$text['label-device_vendor']."</td>\n";
 						echo "				<td class='vtable'>".$text['label-device_key_type']."</td>\n";
 						if ($show_key_subtype) {
 							echo "				<td class='vtable'>".$text['label-device_key_subtype']."</td>\n";
@@ -1616,6 +1744,7 @@
 						echo "					<span id='delete_toggle_keys_".$row['device_key_vendor']."'><input type='checkbox' id='checkbox_all_keys_".$row['device_key_vendor']."' name='checkbox_all' onclick=\"edit_all_toggle('keys_".$row['device_key_vendor']."');\"></span>\n";
 						echo "				</td>\n";
 					}
+					echo "				<td class='vtable'></td>\n";
 					echo "			</tr>\n";
 				}
 
@@ -1623,8 +1752,9 @@
 				if (!empty($row['device_key_uuid']) && is_uuid($row['device_key_uuid'])) {
 					echo "	<input name='device_keys[".$x."][device_key_uuid]' type='hidden' value=\"".escape($row['device_key_uuid'])."\"/>\n";
 				}
+
 			//show all the rows in the array
-				echo "			<tr>\n";
+				echo "<tr class='".(!empty($row['device_key_uuid']) && is_uuid($row["device_key_uuid"]) ? 'draggable' : null)."' data-key-uuid='".escape($row['device_key_uuid'] ?? '')."'>\n";
 				echo "<td valign='top' align='left' nowrap='nowrap'>\n";
 				echo "	<select class='formfld' name='device_keys[".$x."][device_key_category]'>\n";
 				echo "	<option value=''></option>\n";
@@ -1672,15 +1802,26 @@
 				}
 
 				echo "<td align='left' nowrap='nowrap'>\n";
-				//echo "	<input class='formfld' type='text' name='device_keys[".$x."][device_key_type]' style='width: 120px;' maxlength='255' value=\"$row['device_key_type']\">\n";
-				if (!empty($row['device_key_vendor'])) {
-					$device_key_vendor = $row['device_key_vendor'];
+				echo "	<select class='formfld' name='device_keys[".$x."][device_key_vendor]' id='key_vendor_".$x."'>\n";
+				echo "		<option value=''></option>\n";
+				$device_key_vendor = $row['device_key_vendor'] ?? '';
+				foreach ($device_vendors as $vendor) {
+					$selected = '';
+					if ($device_key_vendor == $vendor['name']) {
+						$selected = "selected='selected'";
+					}
+					if (!empty($vendor['name'])) {
+						echo "		<option value='".escape($vendor['name'])."' $selected >".escape(ucwords($vendor['name']))."</option>\n";
+					}
 				}
-				else {
+				echo "	</select>\n";
+				echo "</td>\n";
+
+				echo "<td align='left' nowrap='nowrap'>\n";
+				//echo "	<input class='formfld' type='text' name='device_keys[".$x."][device_key_type]' style='width: 120px;' maxlength='255' value=\"$row['device_key_type']\">\n";
+				if (empty($row['device_key_vendor'])) {
 					$device_key_vendor = $device_vendor;
 				}
-
-				echo "<input type='hidden' id='key_vendor_".$x."' name='device_keys[".$x."][device_key_vendor]' value=\"".$device_key_vendor."\" />\n";
 
 				echo "<select class='formfld' name='device_keys[".$x."][device_key_type]' id='key_type_".$x."' onchange=\"document.getElementById('key_vendor_".$x."').value = this.options[this.selectedIndex].getAttribute('vendor');\">\n";
 				echo "	<option value=''></option>\n";
@@ -1689,7 +1830,7 @@
 				foreach ($vendor_functions as $function) {
 					if (empty($row['device_key_vendor']) && $function['vendor_name'] != $previous_vendor) {
 						if ($i > 0) { echo "	</optgroup>\n"; }
-						echo "	<optgroup label='".ucwords($function['vendor_name'])."'>\n";
+						echo "	<optgroup label='".escape(ucwords($function['vendor_name']))."'>\n";
 					}
 					$selected = '';
 					if (!empty($row['device_key_vendor']) && strtolower($row['device_key_vendor']) == $function['vendor_name'] && $row['device_key_type'] == $function['value']) {
@@ -1758,12 +1899,19 @@
 					}
 				}
 				echo "				</td>\n";
+				if (!empty($row["device_key_uuid"]) && is_uuid($row["device_key_uuid"])) {
+					echo "			<td class='vtable' style='text-align: center;'>\n";
+					echo "				<span class='drag_handle' style='color: #00000055; cursor: grab;'><i class='fa-solid fa-grip-lines' style='width: 15px;'></i></span>\n";
+					echo "			</td>\n";
+				}
 				echo "			</tr>\n";
 			//set the previous vendor
 				$previous_device_key_vendor = $row['device_key_vendor'] ?? '';
 			//increment the array key
 				$x++;
 		}
+
+		echo "			</tbody>\n";
 		echo "			</table>\n";
 		if (!empty($text['description-keys'])) {
 			echo "			<br>".$text['description-keys']."\n";
@@ -1771,6 +1919,87 @@
 		echo "		</td>";
 		echo "	</tr>";
 	}
+
+	// Filter device key types when a vendor is selected
+	echo "<select id='hidden_device_key_types' style='display: none;'>\n";
+	$prev_vendor = '';
+	foreach ($vendor_functions as $function) {
+		if ($function['vendor_name'] != $prev_vendor) {
+			if ($prev_vendor !== '') {
+				echo "	</optgroup>\n";
+			}
+			echo "	<optgroup label='".escape(ucwords($function['vendor_name']))."'>\n";
+			$prev_vendor = $function['vendor_name'];
+		}
+		echo "	<option value='".escape($function['value'])."' vendor='".escape($function['vendor_name'])."'>".($text['label-'.$function['type'] ?? ''] ?? $function['value'])."</option>\n";
+	}
+	if ($prev_vendor !== '') {
+		echo "	</optgroup>\n";
+	}
+	echo "</select>\n";
+	?>
+	<script>
+	const hidden_select = document.getElementById('hidden_device_key_types');
+
+	if (hidden_select) {
+		function populate_type_select(type_select, vendor_value) {
+			// Clear current options
+			type_select.innerHTML = '<option value=""></option>';
+
+			const options = hidden_select.querySelectorAll('option');
+			const selected_vendor = (vendor_value || '').trim().toLowerCase();
+
+			let last_label = null;
+			let current_group = null;
+
+			for (const option of options) {
+				const option_vendor = (option.getAttribute('vendor') || '').trim().toLowerCase();
+
+				// Filter by vendor if one is selected
+				if (selected_vendor !== '' && option_vendor !== selected_vendor) {
+					continue;
+				}
+
+				if (selected_vendor === '') {
+					// When no vendor selected, append all options with optgroups
+					const option_group = option.closest('optgroup');
+					const option_label = option_group ? option_group.getAttribute('label') : null;
+
+					if (option_label && option_label !== last_label) {
+						if (current_group) type_select.appendChild(current_group);
+						current_group = document.createElement('optgroup');
+						current_group.setAttribute('label', option_label);
+						last_label = option_label;
+					}
+
+					if (current_group) {
+						current_group.appendChild(option.cloneNode(true));
+					} else {
+						type_select.appendChild(option.cloneNode(true));
+					}
+				} else {
+					// When a vendor is selected, append options without optgroups
+					type_select.appendChild(option.cloneNode(true));
+				}
+			}
+
+			// Append the final group if it exists
+			if (current_group) type_select.appendChild(current_group);
+		}
+
+		// Attach listener to every vendor select in the table
+		document.querySelectorAll('select[name*="[device_key_vendor]"]').forEach(vendor_select => {
+			vendor_select.addEventListener('change', function() {
+				const type_select = this.closest('tr').querySelector('select[name*="[device_key_type]"]');
+				if (!type_select) return;
+
+				populate_type_select(type_select, this.value);
+				type_select.value = ''; // Reset selection when vendor changes
+			});
+		});
+	}
+	</script>
+	<?php
 
 //device settings
 	if (permission_exists('device_setting_edit')) {
@@ -1904,7 +2133,7 @@
 		if (empty($label)) { $label = $device_alternate[0]['device_address']; }
 		echo "	<table>\n";
 		echo "	<tr>\n";
-		echo "		<td><a href='?id=".escape($device_uuid_alternate)."' id='device_uuid_alternate_link'>".escape($label)."</a><input class='formfld' type='hidden' name='device_uuid_alternate' id='device_uuid_alternate' maxlength='255' value=\"".escape($device_uuid_alternate)."\" />&nbsp;</td>";
+		echo "		<td><a href='?id=".urlencode($device_uuid_alternate)."' id='device_uuid_alternate_link'>".escape($label)."</a><input class='formfld' type='hidden' name='device_uuid_alternate' id='device_uuid_alternate' maxlength='255' value=\"".escape($device_uuid_alternate)."\" />&nbsp;</td>";
 		echo "		<td><a href='#' onclick=\"if (confirm('".$text['confirm-delete']."')) { document.getElementById('device_uuid_alternate').value = ''; document.getElementById('device_uuid_alternate_link').hidden = 'true'; submit_form(); }\" alt='".$text['button-delete']."'>$v_link_label_delete</a></td>\n";
 		echo "	</tr>\n";
 		echo "	</table>\n";
@@ -2060,6 +2289,83 @@
 	echo "</table>";
 	echo "</div>\n";
 	echo "<br><br>";
+
+	//include sortablejs
+	echo "<script src='/resources/sortablejs/sortable.min.js'></script>";
+
+	//device key drag and drop
+	echo "<input type='hidden' id='device_key_ids' name='device_key_ids' value='' />\n";
+	?>
+	<style>
+
+	.selected td:has(.drag_handle) {
+		background-color: #00000015;
+	}
+
+	</style>
+	<script>
+
+	const sortable_lists = document.querySelectorAll('.sortable');
+
+	sortable_lists.forEach(function(list) {
+		Sortable.create(list, {
+			animation: 150,
+			draggable: '.draggable',
+			handle: '.drag_handle',
+			onSort: update_device_key_ids,
+			multiDrag: true,
+			selectedClass: 'selected',
+		});
+	});
+
+	function update_device_key_ids() {
+		let device_key_list = [];
+
+		sortable_lists.forEach(function(list) {
+			let device_keys = list.querySelectorAll('tr.draggable');
+			let key_id = 1;
+			let expansion_map = {};
+
+			// Add the non-expansion device keys to the list
+			device_keys.forEach(function(device_key) {
+				let key_uuid = device_key.getAttribute('data-key-uuid');
+				let category_select = device_key.querySelector('select[name*="[device_key_category]"]');
+				let category = category_select ? category_select.value : null;
+
+				// Skip expansion keys after adding them to the expansion_map
+				if (category.includes('expansion')) {
+					// Initialize array if it doesn't exist
+					if (!expansion_map[category]) {
+						expansion_map[category] = [];
+					}
+					expansion_map[category].push(key_uuid);
+					return;
+				}
+
+				device_key_list.push(`${key_uuid}|${key_id}`);
+				key_id += 1;
+			});
+
+			// Add the expansion device keys to the list
+			for (let key in expansion_map) {
+				key_id = 1;
+
+				if (expansion_map[key]) {
+					let expansion_keys = expansion_map[key];
+
+					expansion_keys.forEach(function(key_uuid) {
+						device_key_list.push(`${key_uuid}|${key_id}`);
+						key_id += 1;
+					});
+				}
+			}
+		});
+
+		document.getElementById('device_key_ids').value = device_key_list;
+	}
+
+	</script>
+	<?php
 	echo "</form>";
 
 	echo "<script>\n";

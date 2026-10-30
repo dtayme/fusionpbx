@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Portions created by the Initial Developer are Copyright (C) 2008-2025
+	Portions created by the Initial Developer are Copyright (C) 2008-2026
 	the Initial Developer. All Rights Reserved.
 
 	Contributor(s):
@@ -50,7 +50,8 @@
 	$summary_style = $settings->get('cdr', 'summary_style', 'horizontal');
 
 //get the http values and set them to a variable
-	if (is_uuid($_REQUEST["id"])) {
+	$uuid = '';
+	if (is_uuid($_REQUEST["id"] ?? '')) {
 		$uuid = $_REQUEST["id"];
 	}
 
@@ -65,8 +66,10 @@
 		$parameters['domain_uuid'] = $domain_uuid;
 	}
 	$parameters['xml_cdr_uuid'] = $uuid;
+	$found = false;
 	$row = $database->select($sql, $parameters, 'row');
 	if (!empty($row) && is_array($row) && @sizeof($row) != 0) {
+		$found = true;
 		$caller_id_name = trim($row["caller_id_name"] ?? '');
 		$caller_id_number = trim($row["caller_id_number"] ?? '');
 		$caller_destination = trim($row["caller_destination"] ?? '');
@@ -88,11 +91,38 @@
 	}
 	unset($sql, $parameters, $row);
 
-//transcribe, if enabled
+	//if the record was not found or is not accessible in this domain, stop here
+	if (!$found) {
+		$document_title = $text['label-xml-cdr-details'];
+		$back_link = 'xml_cdr.php'.(!empty($_SESSION['xml_cdr']['last_query']) ? '?'.$_SESSION['xml_cdr']['last_query'] : null);
+		require_once "resources/header.php";
+		echo "<div style='max-width: 540px; margin: 40px auto;'>\n";
+		echo "	<div class='card' style='text-align: center; padding: 32px;'>\n";
+		echo "		<span class='fa-solid fa-circle-exclamation' style='display: block; font-size: 46px; color: #c0392b; margin-bottom: 16px;'></span>\n";
+		echo "		<h2 style='margin: 0 0 12px; font-weight: 600;'>".escape($text['label-record-not-found'] ?? 'Record Not Found')."</h2>\n";
+		echo "		<p style='margin: 0 0 24px; color: #6c757d;'>".escape($text['text-record-not-found'] ?? 'The requested call record could not be found, may have been deleted, or you do not have permission to view it in this domain.')."</p>\n";
+		echo "		".button::create(['label'=>$text['button-back'] ?? 'Back', 'icon'=>$settings->get('theme', 'button_icon_back'), 'link'=>$back_link])."\n";
+		echo "	</div>\n";
+		echo "</div>\n";
+		require_once "resources/footer.php";
+		exit;
+	}
+
+//transcribe the call recording
 	if (!empty($_GET['action']) && $_GET['action'] == 'transcribe' &&
 		$transcribe_enabled && !empty($transcribe_engine) &&
 		!empty($record_path) && !empty($record_name) &&
 		file_exists($record_path.'/'.$record_name)) {
+
+			//get the minimum recording length in seconds, skip recordings that are too short
+			$transcribe_min_length = (float)$settings->get('call_recordings', 'transcribe_min_length', 3);
+
+			//skip the recording that is too short
+			if (is_numeric($duration) && (float)$duration < $transcribe_min_length) {
+				message::add("The call is less than the minimum " . $transcribe_min_length . " seconds required for transcription.");
+				header('Location: '.$_SERVER['PHP_SELF'].'?id='.$uuid);
+				exit;
+			}
 
 			//prepare the params
 			$params['domain_uuid'] = $domain_uuid;
@@ -100,15 +130,15 @@
 			$params['call_direction'] = $call_direction;
 
 			//add the recording to the transcribe queue
-			$array['transcribe_queue'][$x]['transcribe_queue_uuid'] = uuid();
-			$array['transcribe_queue'][$x]['domain_uuid'] = $domain_uuid;
-			$array['transcribe_queue'][$x]['hostname'] = gethostname();
-			$array['transcribe_queue'][$x]['transcribe_status'] = 'pending';
-			$array['transcribe_queue'][$x]['transcribe_app_class'] = 'call_recordings';
-			$array['transcribe_queue'][$x]['transcribe_app_method'] = 'transcribe_queue';
-			$array['transcribe_queue'][$x]['transcribe_app_params'] = json_encode($params);
-			$array['transcribe_queue'][$x]['transcribe_audio_path'] = $record_path;
-			$array['transcribe_queue'][$x]['transcribe_audio_name'] = $record_name;
+			$array['transcribe_queue'][0]['transcribe_queue_uuid'] = uuid();
+			$array['transcribe_queue'][0]['domain_uuid'] = $domain_uuid;
+			$array['transcribe_queue'][0]['hostname'] = gethostname();
+			$array['transcribe_queue'][0]['transcribe_status'] = 'pending';
+			$array['transcribe_queue'][0]['transcribe_app_class'] = 'call_recordings';
+			$array['transcribe_queue'][0]['transcribe_app_method'] = 'transcribe_queue';
+			$array['transcribe_queue'][0]['transcribe_app_params'] = json_encode($params);
+			$array['transcribe_queue'][0]['transcribe_audio_path'] = $record_path;
+			$array['transcribe_queue'][0]['transcribe_audio_name'] = $record_name;
 
 			//add the checked rows
 			if (is_array($array) && @sizeof($array) != 0) {
@@ -126,6 +156,91 @@
 				//set message
 				message::add($text['message-added_to_queue']);
 			}
+
+			//redirect
+			header('Location: '.$_SERVER['PHP_SELF'].'?id='.$uuid);
+			exit;
+	}
+
+//summarize the call recording
+	if (!empty($_GET['action']) && $_GET['action'] == 'summarize' &&
+		$transcribe_enabled && !empty($transcribe_engine) &&
+		!empty($record_path) && !empty($record_name) &&
+		file_exists($record_path.'/'.$record_name)) {
+
+			//prepare the params
+			$params['domain_uuid'] = $domain_uuid;
+			$params['xml_cdr_uuid'] = $uuid;
+			$params['call_direction'] = $call_direction;
+
+			//get the call transcript
+			$sql = "select * from v_xml_cdr_transcripts ";
+			if (permission_exists('xml_cdr_all')) {
+				$sql .= "where xml_cdr_uuid  = :xml_cdr_uuid ";
+			}
+			else {
+				$sql .= "where xml_cdr_uuid  = :xml_cdr_uuid ";
+				$sql .= "and domain_uuid = :domain_uuid ";
+				$parameters['domain_uuid'] = $params['domain_uuid'];
+			}
+			$parameters['xml_cdr_uuid'] = $params['xml_cdr_uuid'];
+			$row = $database->select($sql, $parameters, 'row');
+			if (!empty($row) && is_array($row) && @sizeof($row) != 0) {
+				$transcript_message = trim($row["transcript_json"] ?? '');
+				//$transcript_summary = trim($row["transcript_summary"] ?? '');
+			}
+			unset($sql, $parameters, $row);
+
+			//summarize the transcript
+			if ($settings->get('language_model', 'enabled') && $settings->get('call_recordings', 'summary_enabled')) {
+				//get the transcribed text
+				$transcribe_text = transcribe::conversation_format($transcript_message ?? '', 'text');
+
+				//get the summary language model prompt
+				$default_prompt = "Summarize this conversation with Key Points, Action Items if any, and Sentiment. Use names when they are provided. Keep the summary professional. Return text without markdown.";
+				$prompt = $settings->get('call_recordings', 'summary_model_prompt', $default_prompt);
+
+				//combine the prompt with the call transcript
+				$request_data['prompt'] = $prompt . "```\n".$transcribe_text."\n```";
+
+				//get the summary language model name
+				$request_model = $settings->get('call_recordings', 'summary_model_name', 'ministral-3:8b');
+
+				//load the language model and get the call summary
+				$language_model = new language_model();
+				$params['transcript_summary'] = $language_model->request($request_model, $request_data);
+
+				//get the summary from the params
+				$transcript_summary = $params['transcript_summary'] ?? '';
+
+				//format the call recording transcript summary
+				require_once "resources/classes/parsedown.php";
+				$parsedown = new Parsedown();
+				$parsedown->setSafeMode(true);
+				$parsedown->setMarkupEscaped(true);
+				$call_summary = str_replace('###', '', $transcript_summary);
+				$call_summary = str_replace('&amp;', '&', $parsedown->text($call_summary));
+			}
+
+			//prepare the array with the transcript details
+			$array['xml_cdr_transcripts'][0]['xml_cdr_transcript_uuid'] = $params['xml_cdr_uuid'];
+			$array['xml_cdr_transcripts'][0]['domain_uuid'] = $params['domain_uuid'];
+			$array['xml_cdr_transcripts'][0]['xml_cdr_uuid'] = $params['xml_cdr_uuid'];
+			//$array['xml_cdr_transcripts'][0]['transcript_json'] = $params['transcribe_message'];
+			$array['xml_cdr_transcripts'][0]['transcript_summary'] = $params['transcript_summary'] ?? '';
+
+			//add temporary permissions
+			$p = permissions::new();
+			$p->add('xml_cdr_transcript_add', 'temp');
+			$p->add('xml_cdr_transcript_edit', 'temp');
+
+			//save the call recording transcript
+			$result = $database->save($array, false);
+			unset($array);
+
+			//remove the temporary permissions
+			$p->delete('xml_cdr_transcript_add', 'temp');
+			$p->delete('xml_cdr_transcript_edit', 'temp');
 
 			//redirect
 			header('Location: '.$_SERVER['PHP_SELF'].'?id='.$uuid);
@@ -184,7 +299,7 @@
 		$parameters['xml_cdr_uuid'] = $uuid;
 		$row = $database->select($sql, $parameters, 'row');
 		if (!empty($row) && is_array($row) && @sizeof($row) != 0) {
-			$log_content = $row["log_content"];
+			$log_content = $row["log_content"] ?? '';
 		}
 		unset($sql, $parameters, $row);
 	}
@@ -210,15 +325,15 @@
 	}
 
 //format the call recording transcript text
-	$transcription_array = json_decode($transcript_json, true);
-	$call_transcript = conversational_html($transcription_array['segments']);
+	$transcription_array = json_decode($transcript_json ?? '', true) ?? [];
+	$call_transcript = conversational_html($transcription_array['segments'] ?? []);
 
 //format the call recording transcript summary
 	require_once "resources/classes/parsedown.php";
 	$parsedown = new Parsedown();
 	$parsedown->setSafeMode(true);
 	$parsedown->setMarkupEscaped(true);
-	$call_summary = str_replace('###', '', $transcript_summary);
+	$call_summary = str_replace('###', '', $transcript_summary ?? '');
 	$call_summary = str_replace('&amp;', '&', $parsedown->text($call_summary));
 
 //get the format
@@ -256,7 +371,7 @@
 			}
 		}
 		if ($format == 'xml') {
-			$array = json_decode(json_encode((array)simplexml_load_string($xml_string)),true);
+			$array = json_decode(json_encode((array)simplexml_load_string($xml_string, "SimpleXMLElement", LIBXML_NONET)), true);
 		}
 	}
 	catch (Exception $e) {
@@ -264,27 +379,27 @@
 	}
 
 //get the variables
-	$xml_cdr_uuid = urldecode($array["variables"]["uuid"]);
+	$xml_cdr_uuid = urldecode($array["variables"]["uuid"] ?? '');
 	$language = urldecode($array["variables"]["language"] ?? '');
-	$start_epoch = urldecode($array["variables"]["start_epoch"]);
-	$start_stamp = urldecode($array["variables"]["start_stamp"]);
-	$start_uepoch = urldecode($array["variables"]["start_uepoch"]);
+	$start_epoch = urldecode($array["variables"]["start_epoch"] ?? '');
+	$start_stamp = urldecode($array["variables"]["start_stamp"] ?? '');
+	$start_uepoch = urldecode($array["variables"]["start_uepoch"] ?? '');
 	$answer_stamp = urldecode($array["variables"]["answer_stamp"] ?? '');
-	$answer_epoch = urldecode($array["variables"]["answer_epoch"]);
-	$answer_uepoch = urldecode($array["variables"]["answer_uepoch"]);
-	$end_epoch = urldecode($array["variables"]["end_epoch"]);
-	$end_uepoch = urldecode($array["variables"]["end_uepoch"]);
-	$end_stamp = urldecode($array["variables"]["end_stamp"]);
+	$answer_epoch = urldecode($array["variables"]["answer_epoch"] ?? '');
+	$answer_uepoch = urldecode($array["variables"]["answer_uepoch"] ?? '');
+	$end_epoch = urldecode($array["variables"]["end_epoch"] ?? '');
+	$end_uepoch = urldecode($array["variables"]["end_uepoch"] ?? '');
+	$end_stamp = urldecode($array["variables"]["end_stamp"] ?? '');
 	//$duration = urldecode($array["variables"]["duration"]);
-	$mduration = urldecode($array["variables"]["mduration"]);
-	$billsec = urldecode($array["variables"]["billsec"]);
-	$billmsec = urldecode($array["variables"]["billmsec"]);
+	$mduration = urldecode($array["variables"]["mduration"] ?? '');
+	$billsec = urldecode($array["variables"]["billsec"] ?? '');
+	$billmsec = urldecode($array["variables"]["billmsec"] ?? '');
 	$bridge_uuid = urldecode($array["variables"]["bridge_uuid"] ?? '');
 	$read_codec = urldecode($array["variables"]["read_codec"] ?? '');
 	$write_codec = urldecode($array["variables"]["write_codec"] ?? '');
 	$remote_media_ip = urldecode($array["variables"]["remote_media_ip"] ?? '');
-	$hangup_cause = urldecode($array["variables"]["hangup_cause"]);
-	$hangup_cause_q850 = urldecode($array["variables"]["hangup_cause_q850"]);
+	$hangup_cause = urldecode($array["variables"]["hangup_cause"] ?? '');
+	$hangup_cause_q850 = urldecode($array["variables"]["hangup_cause_q850"] ?? '');
 	$network_address = urldecode($array["variables"]["network_address"] ?? '');
 	$outbound_caller_id_name = urldecode($array["variables"]["outbound_caller_id_name"] ?? '');
 	$outbound_caller_id_number = urldecode($array["variables"]["outbound_caller_id_number"] ?? '');
@@ -292,9 +407,21 @@
 //create the destinations object
 	$destinations = new destinations();
 
+//build the application icons array
+	$application_icons = array();
+	$application_icons["call_centers"] = "fa-headset";
+	$application_icons["call_flows"] = "fa-share-nodes";
+	$application_icons["conferences"] = "fa-comments";
+	$application_icons["destinations"] = "fa-right-to-bracket";
+	$application_icons["dialplans"] = "fa-right-left";
+	$application_icons["extensions"] = "fa-suitcase";
+	$application_icons["ivr_menus"] = "fa-diagram-project";
+	$application_icons["ring_groups"] = "fa-users";
+	$application_icons["time_conditions"] = "fa-clock";
+	$application_icons["voicemails"] = "fa-envelope";
+
 //build the call flow summary array
-	$xml_cdr = new xml_cdr(["database" => $database, "settings" => $settings, "destinations" => $destinations]);
-	$xml_cdr->domain_uuid = $domain_uuid;
+	$xml_cdr = new xml_cdr(["database" => $database, "settings" => $settings, "destinations" => $destinations, "domain_uuid" => $domain_uuid]);
 	$xml_cdr->call_direction = $call_direction; //used to determine when the call is outbound
 	$xml_cdr->status = $status; //used to determine when the call is outbound
 	if (empty($call_flow)) {
@@ -307,7 +434,11 @@
 		$call_flow_array = json_decode($call_flow, true);
 	}
 	//prepares the raw call flow data to be displayed
-	$call_flow_summary = $xml_cdr->call_flow_summary($call_flow_array);
+	$call_flow_summary = $xml_cdr->call_flow_summary(is_array($call_flow_array) ? $call_flow_array : array());
+	//add the application_icon to the array
+	foreach($call_flow_summary as $id => $row) {
+		$call_flow_summary[$id]["application_icon"] = $application_icons[$row["application_name"] ?? ''] ?? '';
+	}
 
 //debug information
 	if (isset($_REQUEST['debug']) && $_REQUEST['debug'] == 'true') {
@@ -333,6 +464,10 @@
 	else {
 		$start_time = date("Y-m-d g:i:s a", (int) $start_epoch);
 		$end_time = date("Y-m-d g:i:s a", (int) $end_epoch);
+		foreach($call_flow_summary as $x => $row) {
+			$call_flow_summary[$x]["start_stamp"] = date("Y-m-d g:i:s a", (int) $call_flow_summary[$x]["start_epoch"]);
+			$call_flow_summary[$x]["end_stamp"] = date("Y-m-d g:i:s a", (int) $call_flow_summary[$x]["end_epoch"]);
+		}
 	}
 
 //set the year, month and date
@@ -417,8 +552,15 @@
 
 //convert the transcription into a conversation
 	function conversational_html($transcription) {
+		//set the text array to global
 		global $text;
 
+		// if the transcription is empty return an empty string
+		if (empty($transcription)) {
+			return '';
+		}
+
+		// use html to format the conversation
 		$html = '';
 		$previous_speaker = '';
 		$i = 0;
@@ -427,7 +569,7 @@
 				if ($i > 0) { $html .= "</div>\n"; }
 				$speaker_class = $segment['speaker'] === '0' ? 'message-bubble-em' : 'message-bubble-me';
 				$html .= "<div class='message-bubble {$speaker_class}'>";
-				$html .= "<div ><strong>" . $text['label-speaker'] . " " . $segment['speaker'] . "</strong></div>\n";
+				$html .= "<div ><strong>" . $text['label-speaker'] . " " . escape($segment['speaker']) . "</strong></div>\n";
 			}
 			//$html .= "	<span class='time'>".round($segment['start'])."</span>";
 			$html .= "".escape(trim($segment['text']))." ";
@@ -441,6 +583,7 @@
 	}
 
 //get the header
+	$document['title'] = $text['title2'];
 	require_once "resources/header.php";
 
 //page title and description
@@ -448,11 +591,11 @@
 	echo "<tr>\n";
 	echo "<td width='30%' align='left' valign='top' nowrap='nowrap'><b>".$text['title2']."</b><br><br></td>\n";
 	echo "<td width='70%' align='right' valign='top'>\n";
-	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back'),'link'=>'xml_cdr.php'.(!empty($_SESSION['xml_cdr']['last_query']) ? '?'.urlencode($_SESSION['xml_cdr']['last_query']) : null)]);
+	echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back'),'link'=>'xml_cdr.php'.(!empty($_SESSION['xml_cdr']['last_query']) ? '?'.$_SESSION['xml_cdr']['last_query'] : null)]);
 	if (permission_exists('xml_cdr_call_log') && $call_log_enabled && isset($log_content) && !empty($log_content)) {
 		echo button::create(['type'=>'button','label'=>$text['button-call_log'],'icon'=>$settings->get('theme', 'button_icon_search'),'style'=>'margin-left: 15px;','link'=>'xml_cdr_log.php?id='.$uuid]);
 	}
-	if ($transcribe_enabled && !empty($transcribe_engine) && !empty($record_path) && !empty($record_name) && file_exists($record_path.'/'.$record_name)) {
+	if ($transcribe_enabled && !empty($transcribe_engine) && !empty($record_path) && !empty($record_name) && file_exists($record_path.'/'.$record_name) && $duration > 1) {
 		echo button::create(['type'=>'button','label'=>$text['button-transcribe'],'icon'=>'quote-right','id'=>'btn_transcribe','name'=>'btn_transcribe','collapse'=>'hide-xs','style'=>'margin-left: 15px;','onclick'=>"window.location.href='?id=".$uuid."&action=transcribe';"]);
 	}
 	echo "</td>\n";
@@ -499,6 +642,7 @@
 	if ($summary_style == 'horizontal') {
 		echo "<div class='card'>\n";
 		echo "<table width='100%' border='0' cellpadding='0' cellspacing='0'>\n";
+		echo "<tr>\n";
 		echo "<th></th>\n";
 		echo "<th>".$text['label-direction']."</th>\n";
 		//echo "<th>Language</th>\n";
@@ -535,11 +679,11 @@
 
 			echo "	  <a href=\"javascript:void(0);\" onclick=\"window.open('../recordings/recording_play.php?a=download&type=moh&filename=".urlencode('archive/'.$tmp_year.'/'.$tmp_month.'/'.$tmp_day.'/'.$uuid.'.wav')."', 'play',' width=420,height=40,menubar=no,status=no,toolbar=no')\">\n";
 			//$tmp_file_array = explode("\.",$file);
-			echo 	$caller_id_name.' ';
+			echo 	escape($caller_id_name).' ';
 			echo "	  </a>";
 		}
 		else {
-			echo 	$caller_id_name.' ';
+			echo 	escape($caller_id_name).' ';
 		}
 		echo "	</td>\n";
 		echo "	<td valign='top' class='".$row_style[$c]."'>";
@@ -559,7 +703,7 @@
 			echo "	<td valign='top' class='".$row_style[$c]."'>".escape($hangup_cause)."</td>\n";
 		}
 		echo "	<td valign='top' class='".$row_style[$c]."'>".escape(gmdate("G:i:s", (int)$duration))."</td>\n";
-		echo "	<td valign='top' class='".$row_style[$c]."'>".escape($text['label-'.$status])."</td>\n";
+		echo "	<td valign='top' class='".$row_style[$c]."'>".escape($text['label-'.$status] ?? '')."</td>\n";
 		echo "</table>";
 		echo "</div>\n";
 		echo "<br /><br />\n";
@@ -589,15 +733,14 @@
 	echo "	</tr>\n";
 	$i = 1;
 	foreach ($call_flow_summary as $row) {
-		$application_icon = $row["application_icon"][$row["application_name"] ?? ''] ?? '';
 		echo "	<tr>\n";
-		echo "		<td style='width: 0; padding-right: 0;' valign='top' class='".$row_style[$c]."'><span class='fa-solid ".$application_icon."' style='opacity: 0.8;'></span></td>";
-		echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".$row["application_url"]."\">".escape($row["application_label"])."</a></td>\n";
+		echo "		<td style='width: 0; padding-right: 0;' valign='top' class='".$row_style[$c]."'><span class='fa-solid ".escape($row["application_icon"])."' style='opacity: 0.8;'></span></td>";
+		echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".escape($row["application_url"])."\">".escape($row["application_label"])."</a></td>\n";
 		if ($call_direction == 'local' || $call_direction == 'outbound') {
-			echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".$row["source_url"]."\">".escape($row["source_number"])."</a></td>\n";
+			echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".escape($row["source_url"])."\">".escape($row["source_number"])."</a></td>\n";
 		}
-		echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".$row["destination_url"]."\">".escape($row["destination_number"])."</a></td>\n";
-		echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".$row["destination_url"]."\">".escape($row["destination_label"])."</a></td>\n";
+		echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".escape($row["destination_url"])."\">".escape($row["destination_number"])."</a></td>\n";
+		echo "		<td valign='top' class='".$row_style[$c]."'><a href=\"".escape($row["destination_url"])."\">".escape($row["destination_label"])."</a></td>\n";
 		echo "		<td valign='top' class='".$row_style[$c]."'>".escape($row["start_stamp"])."</td>\n";
 		echo "		<td valign='top' class='".$row_style[$c]."'>".escape($row["end_stamp"])."</td>\n";
 		echo "		<td valign='top' class='".$row_style[$c]."'>".escape($row["duration_formatted"])."</td>\n";
@@ -615,8 +758,9 @@
 	echo "<br /><br />\n";
 
 //call recording
-	if (permission_exists('xml_cdr_recording') && !empty($record_path)) {
+	if (permission_exists('xml_cdr_recording') && !empty($record_path) && $duration > 1) {
 		//recording properties
+		$record_type = '';
 		if (!empty($record_name) && permission_exists('xml_cdr_recording') && (permission_exists('xml_cdr_recording_play') || permission_exists('xml_cdr_recording_download'))) {
 			$record_extension = pathinfo($record_name, PATHINFO_EXTENSION);
 			switch ($record_extension) {
@@ -632,7 +776,7 @@
 		echo "	<td align='right'>\n";
 		//controls
 		if (!empty($record_path) || !empty($record_name)) {
-			echo "<audio id='recording_audio_".escape($xml_cdr_uuid)."' style='display: none;' preload='none' ontimeupdate=\"update_progress('".escape($xml_cdr_uuid)."')\" onended=\"recording_reset('".escape($xml_cdr_uuid)."');\" src=\"download.php?id=".escape($xml_cdr_uuid)."\" type='".escape($record_type)."'></audio>";
+			echo "<audio id='recording_audio_".escape($xml_cdr_uuid)."' style='display: none;' preload='none' ontimeupdate=\"update_progress('".escape($xml_cdr_uuid)."')\" onended=\"recording_reset('".escape($xml_cdr_uuid)."');\" src=\"download.php?id=".urlencode($xml_cdr_uuid)."\" type='".escape($record_type)."'></audio>";
 			echo button::create(['type'=>'button','title'=>$text['label-play'].' / '.$text['label-pause'],'icon'=>$settings->get('theme', 'button_icon_play'),'label'=>$text['label-play'],'id'=>'recording_button_'.escape($xml_cdr_uuid),'onclick'=>"recording_play('".escape($xml_cdr_uuid)."', null, null, '".$text['label-play']."')",'style'=>'margin-bottom: 8px; margin-top: -8px;']);
 			if (permission_exists('xml_cdr_recording_download')) {
 				echo button::create(['type'=>'button','title'=>$text['label-download'],'icon'=>$settings->get('theme', 'button_icon_download'),'label'=>$text['label-download'],'onclick'=>"window.location.href='download.php?id=".urlencode($xml_cdr_uuid)."&t=bin';",'style'=>'margin-bottom: 8px; margin-top: -8px;']);
@@ -693,15 +837,30 @@
 	echo "</style>\n";
 
 //transcription, if enabled
-	if ($transcribe_enabled && !empty($transcribe_engine) && !empty($call_transcript)) {
-		echo "<b>".$text['label-transcription']."</b><br>\n";
+	if ($transcribe_enabled && !empty($transcribe_engine) && !empty($call_transcript) && $duration > 1) {
+		echo "<div style='display: flex; justify-content: space-between; align-items: center;'>\n";
+		echo "	<div><b>".$text['label-transcription']."</b>&nbsp;</div>\n";
+		echo "	<div>\n";
+		if ($transcribe_enabled && !empty($transcribe_engine) && !empty($record_path) && !empty($record_name) && file_exists($record_path.'/'.$record_name)) {
+			echo button::create(['type'=>'button','label'=>$text['button-transcribe'],'icon'=>'quote-right','id'=>'btn_transcribe','name'=>'btn_transcribe','collapse'=>'hide-xs','style'=>'margin-left: 15px; margin-bottom: 8px; margin-top: -8px;','onclick'=>"window.location.href='?id=".$uuid."&action=transcribe';"]);
+		}
+		echo "	</div>\n";
+		echo "</div>";
 		echo "<div class='card'>\n";
-		echo "	<table width='100%' border='0' cellpadding='0' cellspacing='0'>\n";
-		echo "	<tr >\n";
-		echo "		<td valign='top' style='width: 50%;'><div style='min-width: 200px; max-width: 800px;' margin: 0px;>".$call_transcript."</div></td>\n";
-		echo "		<td valign='top' style='width: 50%;'><div style='min-width: 200px; max-width: 800px; margin: 15px;'>".$call_summary."</div></td>\n";
-		echo "	</tr>\n";
-		echo "	</table>";
+		echo "	<div style='min-width: 200px; max-width: 800px;'>".$call_transcript."</div>\n";
+		echo "</div>\n";
+		echo "<br /><br />\n";
+
+		echo "<div style='display: flex; justify-content: space-between; align-items: center;'>\n";
+		echo "	<div><b>".$text['label-summary']."</b>&nbsp;</div>\n";
+		echo "	<div>\n";
+		if ($transcribe_enabled && !empty($transcribe_engine) && !empty($record_path) && !empty($record_name) && file_exists($record_path.'/'.$record_name)) {
+			echo button::create(['type'=>'button','label'=>$text['button-summarize'],'icon'=>'list-ul','id'=>'btn_transcribe','name'=>'btn_transcribe','collapse'=>'hide-xs','style'=>'margin-left: 15px; margin-bottom: 8px; margin-top: -8px;','onclick'=>"window.location.href='?id=".$uuid."&action=summarize';"]);
+		}
+		echo "	</div>\n";
+		echo "</div>";
+		echo "<div class='card'>\n";
+		echo "	<div style='min-width: 200px; max-width: 800px; margin: 15px;'>".$call_summary."</div>\n";
 		echo "</div>\n";
 		echo "<br /><br />\n";
 	}

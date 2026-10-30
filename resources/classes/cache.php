@@ -24,23 +24,9 @@ class cache {
 
 		//get the settings
 		$this->settings = $settings;
-		$this->method = $this->setting('method');
-		$this->syslog = $this->setting('syslog');
-		$this->location = $this->setting('location');
-		$this->method = 'file';
-		$this->syslog = 'false';
-		$this->location = '/var/cache/fusionpbx';
-	}
-
-	/**
-	 * Get a specific cache setting from the settings array.
-	 *
-	 * @param string $subcategory The subcategory of the cache setting to retrieve.
-	 *
-	 * @return mixed The value of the specified cache setting, or null if it does not exist.
-	 */
-	private function setting($subcategory) {
-		return $this->settings->get('cache', $subcategory);
+		$this->method = $this->settings->get('cache', 'method', 'file');
+		$this->syslog = $this->settings->get('cache', 'syslog', false);
+		$this->location = $this->settings->get('cache', 'location', '/var/cache/fusionpbx');
 	}
 
 	/**
@@ -50,10 +36,34 @@ class cache {
 	 *
 	 * @return mixed The cached value, or null if it does not exist.
 	 */
+	/**
+	 * Sanitize a cache key to prevent path traversal
+	 *
+	 * Removes empty segments, "." and ".." so the key can never escape
+	 * the cache location directory.
+	 *
+	 * @param string $key The cache key to sanitize
+	 *
+	 * @return string A safe cache key
+	 */
+	private function sanitize_key($key) {
+		$key = str_replace("\\", "/", (string)$key);
+		$clean_segments = array();
+		foreach (explode('/', $key) as $segment) {
+			if ($segment !== '' && $segment !== '.' && $segment !== '..') {
+				$clean_segments[] = $segment;
+			}
+		}
+		return implode('/', $clean_segments);
+	}
+
 	public function get($key) {
 
 		//change the delimiter
 		$key = str_replace(":", ".", $key);
+
+		//sanitize the key to prevent path traversal
+		$key = $this->sanitize_key($key);
 
 		//cache method memcache
 		if ($this->method === "memcache") {
@@ -98,6 +108,9 @@ class cache {
 		//change the delimiter
 		$key = str_replace(":", ".", $key);
 
+		//sanitize the key to prevent path traversal
+		$key = $this->sanitize_key($key);
+
 		//save to memcache
 		if ($this->method === "memcache") {
 			//connect to event socket
@@ -131,10 +144,15 @@ class cache {
 	public function delete($key) {
 
 		//debug information
-		if ($this->syslog === "true") {
+		if ($this->syslog == true) {
 			openlog("fusionpbx", LOG_PID | LOG_PERROR, LOG_USER);
 			syslog(LOG_WARNING, "debug: cache: [key: " . $key . ", script: " . $_SERVER['SCRIPT_NAME'] . ", line: " . __line__ . "]");
 			closelog();
+		}
+
+		//key is required return false if empty
+		if (empty($key)) {
+			return false;
 		}
 
 		//cache method memcache
@@ -163,6 +181,9 @@ class cache {
 		if ($this->method === "file") {
 			//change the delimiter
 			$key = str_replace(":", ".", $key);
+
+			//sanitize the key to prevent path traversal
+			$key = $this->sanitize_key($key);
 
 			//connect to event socket
 			$esl = event_socket::create();
@@ -199,7 +220,7 @@ class cache {
 	public function flush() {
 
 		//debug information
-		if ($this->syslog === "true") {
+		if ($this->syslog == true) {
 			openlog("fusionpbx", LOG_PID | LOG_PERROR, LOG_USER);
 			syslog(LOG_WARNING, "debug: cache: [flush: all, script: " . $_SERVER['SCRIPT_NAME'] . ", line: " . __line__ . "]");
 			closelog();

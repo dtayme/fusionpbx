@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Portions created by the Initial Developer are Copyright (C) 2008-2025
+	Portions created by the Initial Developer are Copyright (C) 2008-2026
 	the Initial Developer. All Rights Reserved.
 
 	Contributor(s):
@@ -50,8 +50,6 @@
 	$limit = '';
 
 //get the http get values and set them as php variables
-	$order_by = $_GET["order_by"] ?? '';
-	$order = $_GET["order"] ?? '';
 	$action = $_GET["action"] ?? '';
 
 //initialize the destinations object
@@ -439,38 +437,6 @@
 	$document['title'] = $text['title-dialplan-inbound-add'];
 	require_once "resources/header.php";
 
-?>
-
-<script type="text/javascript">
-	function type_onchange(dialplan_detail_type) {
-		var field_value = document.getElementById(dialplan_detail_type).value;
-		if (dialplan_detail_type == "condition_field_1") {
-			if (field_value == "destination_number") {
-				document.getElementById("desc_condition_expression_1").innerHTML = "expression: 5551231234";
-			}
-			else if (field_value == "zzz") {
-				document.getElementById("desc_condition_expression_1").innerHTML = "";
-			}
-			else {
-				document.getElementById("desc_condition_expression_1").innerHTML = "";
-			}
-		}
-		if (dialplan_detail_type == "condition_field_2") {
-			if (field_value == "destination_number") {
-				document.getElementById("desc_condition_expression_2").innerHTML = "expression: 5551231234";
-			}
-			else if (field_value == "zzz") {
-				document.getElementById("desc_condition_expression_2").innerHTML = "";
-			}
-			else {
-				document.getElementById("desc_condition_expression_2").innerHTML = "";
-			}
-		}
-	}
-</script>
-
-<?php
-
 //show the content
 	echo "<form method='post' name='frm' id='frm'>\n";
 
@@ -579,7 +545,6 @@
 		echo "	</td>\n";
 		echo "	</tr>\n";
 		echo "	</table>\n";
-		echo "	<div id='desc_condition_expression_1'></div>\n";
 		echo "</td>\n";
 		echo "</tr>\n";
 
@@ -655,7 +620,6 @@
 		echo "	</td>\n";
 		echo "	</tr>\n";
 		echo "	</table>\n";
-		echo "	<div id='desc_condition_expression_2'></div>\n";
 		echo "</td>\n";
 		echo "</tr>\n";
 	}

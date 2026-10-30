@@ -116,37 +116,29 @@ function show_upgrade_menu() {
 			case 1:
 				do_upgrade_code();
 				do_upgrade_code_submodules();
-				do_upgrade_auto_loader();
 				exit();
 			case '1a':
 				do_upgrade_code();
-				do_upgrade_auto_loader();
 				exit();
 			case '1b':
 				do_upgrade_code_submodules();
-				do_upgrade_auto_loader();
 				break;
 			case 2:
 				do_upgrade_schema();
 				break;
 			case 3:
-				do_upgrade_auto_loader();
 				do_upgrade_domains();
 				break;
 			case 4:
-				do_upgrade_auto_loader();
 				do_upgrade_menu();
 				break;
 			case 5:
-				do_upgrade_auto_loader();
 				do_upgrade_permissions();
 				break;
 			case 6:
-				do_upgrade_auto_loader();
 				do_file_permissions($text, $settings);
 				break;
 			case 7:
-				do_upgrade_auto_loader();
 				do_upgrade_services($text, $settings);
 				break;
 			case 8:
@@ -154,7 +146,6 @@ function show_upgrade_menu() {
 				break;
 			case 'a':
 				do_upgrade_code();
-				do_upgrade_auto_loader();
 				do_upgrade_schema();
 				do_upgrade_domains();
 				do_upgrade_menu();
@@ -170,26 +161,6 @@ function show_upgrade_menu() {
 		//add a few line feeds
 		echo "\n\n";
 	}
-}
-
-/**
- * Upgrade auto loader by removing temporary files and updating it.
- *
- * @return void
- *
- * @global text $text
- * @global auto_loader $autoload
- */
-function do_upgrade_auto_loader() {
-	global $text, $autoload;
-
-	//remove temp files
-	unlink(sys_get_temp_dir() . '/' . auto_loader::CLASSES_FILE);
-	unlink(sys_get_temp_dir() . '/' . auto_loader::INTERFACES_FILE);
-
-	//create a new instance of the autoloader
-	$autoload->update();
-	echo "{$text['message-updated_autoloader']}\n";
 }
 
 /**
@@ -242,6 +213,9 @@ function do_file_permissions($text, settings $settings) {
 		//update the auto_loader cache permissions file
 		$directories[] = sys_get_temp_dir() . '/' . auto_loader::CLASSES_FILE;
 
+		// The web server user is www-data on Linux but www on BSD systems
+		$web_user = stristr(PHP_OS, 'BSD') ? 'www' : 'www-data';
+
 		//execute chown command for each directory
 		foreach ($directories as $dir) {
 			//skip empty directories
@@ -253,10 +227,13 @@ function do_file_permissions($text, settings $settings) {
 			}
 
 			//notify user
-			echo "chown -R www-data:www-data $dir\n";
+			echo "chown -R $web_user:$web_user $dir\n";
 
 			//execute
-			exec("chown -R www-data:www-data $dir");
+			exec("chown -R $web_user:$web_user " . escapeshellarg($dir), $chown_output, $chown_return);
+			if ($chown_return !== 0) {
+				echo "WARNING: failed to change ownership of $dir (chown exit code $chown_return)\n";
+			}
 		}
 	}
 	else {
@@ -450,8 +427,16 @@ function do_upgrade_defaults() {
  */
 function do_upgrade_services($text, settings $settings) {
 	echo ($text['description-upgrade_services'] ?? "")."\n";
-	$core_files = glob(dirname(__DIR__, 2) . "/core/*/resources/service/*.service");
-	$app_files = glob(dirname(__DIR__, 2) . "/app/*/resources/service/*.service");
+
+	// Determine the correct service file name for this OS
+    if (stristr(PHP_OS, 'FreeBSD')) {
+    	$search_file_name = 'freebsd';
+    } else {
+		$search_file_name = 'debian';
+    }
+	
+	$core_files = glob(dirname(__DIR__, 2) . "/core/*/resources/service/" . $search_file_name . ".service");
+    $app_files = glob(dirname(__DIR__, 2) . "/app/*/resources/service/" . $search_file_name . ".service");
 	$service_files = array_merge($core_files, $app_files);
 	foreach($service_files as $file) {
 		$service_name = get_service_name($file);
@@ -500,13 +485,22 @@ function is_root_user(): bool {
  */
 function do_restart_services($text, settings $settings) {
 	echo ($text['description-restart_services'] ?? "")."\n";
-	$core_files = glob(dirname(__DIR__, 2) . "/core/*/resources/service/*.service");
-	$app_files = glob(dirname(__DIR__, 2) . "/app/*/resources/service/*.service");
+
+	// Determine the correct service file name for this OS
+    if (stristr(PHP_OS, 'FreeBSD')) {
+    	$search_file_name = 'freebsd';
+    } else {
+		$search_file_name = 'debian';
+    }
+
+	$core_files = glob(dirname(__DIR__, 2) . "/core/*/resources/service/" . $search_file_name . ".service");
+	$app_files = glob(dirname(__DIR__, 2) . "/app/*/resources/service/" . $search_file_name . ".service");
 	$service_files = array_merge($core_files, $app_files);
 	foreach($service_files as $file) {
 		$service_name = get_service_name($file);
 		echo " ".$service_name."\n";
-		system("systemctl restart ".$service_name);
+		$service_name = preg_replace('/[^a-zA-Z0-9_-]/', '', $service_name);
+		system("systemctl restart " . escapeshellarg($service_name));
 	}
 }
 
@@ -554,7 +548,7 @@ function load_config_php() {
 
 	//make the config directory
 	if (isset($config_path)) {
-		system('mkdir -p ' . $config_path);
+		system('mkdir -p ' . escapeshellarg($config_path));
 	} else {
 		echo "config directory not found\n";
 		exit;
@@ -582,6 +576,9 @@ function load_config_php() {
 	$conf .= "temp.dir = /tmp\n";
 	$conf .= "php.dir = " . PHP_BINDIR . "\n";
 	$conf .= "php.bin = php\n";
+	$conf .= "\n";
+	$conf .= "#security settings\n";
+	$conf .= "security.header.content_security_policy.frame_ancestors =\n";
 	$conf .= "\n";
 	$conf .= "#session settings\n";
 	$conf .= "session.cookie_httponly = true\n";

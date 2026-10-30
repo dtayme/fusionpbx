@@ -25,6 +25,12 @@ class event_guard_nftables implements event_guard_interface {
 	private $firewall_path;
 
 	/**
+	 * chains array
+	 * @var array
+	 */
+	private $chains;
+
+	/**
 	 * called when the object is created
 	 */
 	public function __construct(settings $settings) {
@@ -35,13 +41,22 @@ class event_guard_nftables implements event_guard_interface {
 		$this->database = $settings->database();
 
 		// Set firewall path
-		$this->firewall_path = trim(shell_exec('command -v nft'));
+		$this->firewall_path = trim((string) shell_exec('command -v nft'));
 
 		// Create a chain array
-		$chains[] = 'sip-auth-ip';
-		$chains[] = 'sip-auth-fail';
-		foreach ($chains as $chain) {
-			shell_exec($this->firewall_path.' add chain inet filter ' . $chain . ' { type filter hook input priority -50 \; }'); // >/dev/null 2>&1 &');
+		$this->chains[] = 'sip-auth-ip';
+		$this->chains[] = 'sip-auth-fail';
+
+		// Add the chains if they do not already exist
+		if ($this->firewall_path != '') {
+			foreach ($this->chains as $chain) {
+				$command = $this->firewall_path . ' list chain inet filter ' . escapeshellarg($chain) . ' 2>/dev/null';
+				exec($command, $output, $exit_code);
+				if ($exit_code !== 0) {
+					$command = $this->firewall_path . ' add chain inet filter ' . escapeshellarg($chain) . ' { type filter hook input priority -50 \; } 2>/dev/null';
+					exec($command, $output, $exit_code);
+				}
+			}
 		}
 	}
 
@@ -60,16 +75,21 @@ class event_guard_nftables implements event_guard_interface {
 			return false;
 		}
 
-		// Run the block command for nftables
-		// Example: nft add element inet filter sip-auth-ip { 192.168.1.100 }
-		$command = $this->firewall_path.' add rule inet filter '.$filter.' ip saddr '.$ip_address.' counter drop';
-		$result = shell_exec($command);
-		if (!empty($result) && strlen($result) > 3) {
-			return false;
+		// Check to see if the address is already blocked so duplicates are not added
+		$command = $this->firewall_path . ' -a list chain inet filter ' . escapeshellarg($filter) . ' 2>/dev/null';
+		exec($command, $lines, $exit_code);
+		if ($exit_code === 0 && strpos(implode("\n", $lines), 'ip saddr ' . $ip_address . ' ') !== false) {
+			// Return success, the address is already blocked
+			return true;
 		}
 
-		// Return success
-		return true;
+		// Run the block command for nftables
+		// Example: nft add rule inet filter sip-auth-ip ip saddr 192.168.1.100 counter drop
+		$command = $this->firewall_path . ' add rule inet filter ' . escapeshellarg($filter) . ' ip saddr ' . $ip_address . ' counter drop 2>/dev/null';
+		exec($command, $output, $exit_code);
+
+		// Return the result
+		return $exit_code === 0;
 	}
 
 	/**
@@ -86,21 +106,56 @@ class event_guard_nftables implements event_guard_interface {
 			return false;
 		}
 
-		// Command used to get the handle
-		$command = $this->firewall_path.' -a list chain inet filter '.$filter.' | grep '.$ip_address;
-		echo $command."\n";
-		$result = trim(shell_exec($command));
-		$rows = explode("\n", $result);
-
-		// Unblock the address
-		foreach ($rows as $row) {
-			$handle = trim(explode("#", $row)[1] ?? '');
-			$command = $this->firewall_path.' delete rule inet filter '.$filter.' '.$handle;
-			echo $command."\n";
-			$result = shell_exec($command);
+		// Remove from all chains or a specific one
+		if ($filter == 'all') {
+			$chains = $this->chains;
 		}
-		if (!empty($result)) {
-			return false;
+		else {
+			$chains = [$filter];
+		}
+
+		// Remove the IP address from each chain
+		foreach($chains as $chain) {
+			// Loop until there are no matching rules remaining
+			for ($i = 0; $i < 999; $i++) {
+				// List the chain rules with their handles (the exec() output array must be cleared first)
+				unset($lines);
+				$command = $this->firewall_path . ' -a list chain inet filter ' . escapeshellarg($chain) . ' 2>/dev/null';
+				exec($command, $lines, $exit_code);
+				if ($exit_code !== 0) {
+					// The chain does not exist
+					break;
+				}
+
+				// Collect the handles of the matching rules
+				$handles = [];
+				foreach ($lines as $line) {
+					if (strpos($line, 'ip saddr ' . $ip_address . ' ') !== false) {
+						if (preg_match('/# handle (\d+)/', $line, $matches)) {
+							$handles[] = $matches[1];
+						}
+					}
+				}
+				if (count($handles) == 0) {
+					// No matching rules remain
+					break;
+				}
+
+				// Delete the matching rules by handle
+				$deleted = false;
+				foreach ($handles as $handle) {
+					unset($output);
+					$command = $this->firewall_path . ' delete rule inet filter ' . escapeshellarg($chain) . ' handle ' . $handle . ' 2>/dev/null';
+					exec($command, $output, $exit_code);
+					if ($exit_code === 0) {
+						$deleted = true;
+					}
+				}
+				if (!$deleted) {
+					// The rules could not be deleted
+					break;
+				}
+			}
 		}
 
 		// Return success
@@ -115,11 +170,15 @@ class event_guard_nftables implements event_guard_interface {
 	 * @return bool True if the address is blocked, False otherwise
 	 */
 	public function block_exists(string $ip_address, string $filter) : bool {
-		// Determine whether to return true or false
-		// Check to see if the address is blocked
-		$command = $this->firewall_path.' list chain inet filter input | grep "ip saddr '.$ip_address.'"';
-		$result = shell_exec($command);
-		if (!empty($result) && strlen($result) > 3) {
+		// Invalid IP address
+		if (!filter_var($ip_address, FILTER_VALIDATE_IP)) {
+			return false;
+		}
+
+		// Check to see if the address is blocked in the chain
+		$command = $this->firewall_path . ' -a list chain inet filter ' . escapeshellarg($filter) . ' 2>/dev/null';
+		exec($command, $lines, $exit_code);
+		if ($exit_code === 0 && strpos(implode("\n", $lines), 'ip saddr ' . $ip_address . ' ') !== false) {
 			return true;
 		}
 

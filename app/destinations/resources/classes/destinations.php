@@ -201,6 +201,7 @@
 				return $destination_regex;
 
 		}
+
 		/**
 		* Build the destinations array
 		*/
@@ -286,32 +287,32 @@
 				}
 			}
 
-			$this->destinations[$x]['type'] = 'array';
-			$this->destinations[$x]['label'] = 'other';
-			$this->destinations[$x]['name'] = 'dialplans';
-			$this->destinations[$x]['field']['name'] = "name";
-			$this->destinations[$x]['field']['destination'] = "destination";
-			$this->destinations[$x]['select_value']['dialplan'] = "transfer:\${destination}";
-			$this->destinations[$x]['select_value']['ivr'] = "menu-exec-app:transfer \${destination}";
-			$this->destinations[$x]['select_label'] = "\${name}";
-			$y = 0;
-			$this->destinations[$x]['result']['data'][$y]['label'] = 'check_voicemail';
-			$this->destinations[$x]['result']['data'][$y]['name'] = '*98';
-			$this->destinations[$x]['result']['data'][$y]['destination'] = '*98 XML ${context}';
-			$y++;
-			$this->destinations[$x]['result']['data'][$y]['label'] = 'company_directory';
-			$this->destinations[$x]['result']['data'][$y]['name'] = '*411';
-			$this->destinations[$x]['result']['data'][$y]['destination'] = '*411 XML ${context}';
-			$y++;
-			$this->destinations[$x]['result']['data'][$y]['label'] = 'hangup';
-			$this->destinations[$x]['result']['data'][$y]['name'] = 'hangup';
-			$this->destinations[$x]['result']['data'][$y]['application'] = 'hangup';
-			$this->destinations[$x]['result']['data'][$y]['destination'] = '';
-			$y++;
-			$this->destinations[$x]['result']['data'][$y]['label'] = 'record';
-			$this->destinations[$x]['result']['data'][$y]['name'] = '*732';
-			$this->destinations[$x]['result']['data'][$y]['destination'] = '*732 XML ${context}';
-			$y++;
+			// $this->destinations[$x]['type'] = 'array';
+			// $this->destinations[$x]['label'] = 'other';
+			// $this->destinations[$x]['name'] = 'dialplans';
+			// $this->destinations[$x]['field']['name'] = "name";
+			// $this->destinations[$x]['field']['destination'] = "destination";
+			// $this->destinations[$x]['select_value']['dialplan'] = "transfer:\${destination}";
+			// $this->destinations[$x]['select_value']['ivr'] = "menu-exec-app:transfer \${destination}";
+			// $this->destinations[$x]['select_label'] = "\${name}";
+			// $y = 0;
+			// $this->destinations[$x]['result']['data'][$y]['label'] = 'check_voicemail';
+			// $this->destinations[$x]['result']['data'][$y]['name'] = '*98';
+			// $this->destinations[$x]['result']['data'][$y]['destination'] = '*98 XML ${context}';
+			// $y++;
+			// $this->destinations[$x]['result']['data'][$y]['label'] = 'company_directory';
+			// $this->destinations[$x]['result']['data'][$y]['name'] = '*411';
+			// $this->destinations[$x]['result']['data'][$y]['destination'] = '*411 XML ${context}';
+			// $y++;
+			// $this->destinations[$x]['result']['data'][$y]['label'] = 'hangup';
+			// $this->destinations[$x]['result']['data'][$y]['name'] = 'hangup';
+			// $this->destinations[$x]['result']['data'][$y]['application'] = 'hangup';
+			// $this->destinations[$x]['result']['data'][$y]['destination'] = '';
+			// $y++;
+			// $this->destinations[$x]['result']['data'][$y]['label'] = 'record';
+			// $this->destinations[$x]['result']['data'][$y]['name'] = '*732';
+			// $this->destinations[$x]['result']['data'][$y]['destination'] = '*732 XML ${context}';
+			// $y++;
 		}
 
 		/**
@@ -362,6 +363,15 @@
 						$response .= "	tb.setAttribute('onchange', \"".$onchange."\");\n";
 						$response .= "	tb.setAttribute('onkeyup', \"".$onchange."\");\n";
 					}
+					$response .= "	const searchable_select = document.getElementById('".$destination_id."_search');\n";
+					$response .= "	if (searchable_select) {\n";
+					$response .= "		tb.setAttribute('style', 'width: ' + searchable_select.offsetWidth + 'px;');\n";
+					$response .= "		searchable_select.style.display = 'none';\n";
+					$response .= "		tb.value=obj.value;\n";
+					$response .= "	} else {\n";
+					$response .= "		tb.setAttribute('style', 'width: ' + obj.offsetWidth + 'px;');\n";
+					$response .= "		tb.value=obj.options[obj.selectedIndex].value;\n";
+					$response .= "	}\n";
 					$response .= "	tb.value=obj.options[obj.selectedIndex].value;\n";
 					$response .= "	document.getElementById('btn_select_to_input_".$destination_id."').style.visibility = 'hidden';\n";
 					$response .= "	tbb=document.createElement('INPUT');\n";
@@ -382,6 +392,8 @@
 					$response .= "	obj[0].parentNode.removeChild(obj[1]);\n";
 					$response .= "	obj[0].parentNode.removeChild(obj[2]);\n";
 					$response .= "	document.getElementById('btn_select_to_input_".$destination_id."').style.visibility = 'visible';\n";
+					$response .= "	const searchable_select = document.getElementById('".$destination_id."_search');\n";
+					$response .= "	if (searchable_select) { searchable_select.style.display = 'inline-block'; }\n";
 					if (!empty($onchange)) {
 						$response .= "	".$onchange.";\n";
 					}
@@ -396,21 +408,24 @@
 				//set default to false
 				$select_found = false;
 
-				$response .= "	<select name='".$destination_name."' id='".$destination_id."' class='formfld' style='".$select_style."' onchange=\"".$onchange."\">\n";
+				$response .= "	<select name='".$destination_name."' id='".$destination_id."' class='formfld searchable_select' style='".$select_style."' onchange=\"".$onchange."\">\n";
 				$response .= "		<option value='' ".(!empty($placeholder) ? "selected='selected' disabled='disabled'" : null).">".(!empty($placeholder) ? $placeholder : null)."</option>\n";
 				foreach ($this->destinations as $row) {
 
+					//set variables to simplify the code
 					$name = $row['name'];
 					$label = $row['label'];
-					$destination = $row['field']['destination'] ?? '';
 
 					//add multi-lingual support
 					if (file_exists(dirname(__DIR__, 4)."/app/".$name."/app_languages.php")) {
 						$text2 = $language2->get($this->language, 'app/'.$name);
 					}
 
+					//set the group label
+					$group_label = ($text2['label-'.$name] ?? $text2['title-'.$name]);
+
 					if (!empty($row['result']['data']) && !empty($row['select_value'][$destination_type])) {
-						$response .= "		<optgroup label='".$text2['title-'.$name]."'>\n";
+						$response .= "		<optgroup label='".$group_label."'>\n";
 						$label2 = $label;
 						foreach ($row['result']['data'] as $data) {
 							$select_value = $row['select_value'][$destination_type];
@@ -463,6 +478,7 @@
 							$select_label = str_replace("&#9993", 'email-icon', $select_label);
 							$select_label = escape(trim($select_label));
 							$select_label = str_replace('email-icon', '&#9993', $select_label);
+
 							if ($select_value == $destination_value) { $selected = "selected='selected' "; $select_found = true; } else { $selected = ''; }
 							if ($label2 == 'destinations') { $select_label = format_phone($select_label); }
 							$response .= "			<option value='".escape($select_value)."' ".$selected.">".$select_label."</option>\n";
@@ -530,6 +546,9 @@
 				//add the language object
 				$language2 = new text;
 
+				//pre-define the array
+				$text2 = [];
+
 				//build the destination select list in html
 				$response .= "	<select id='{$destination_id}_type' class='formfld' style='".$select_style."' onchange=\"get_destinations('".$destination_id."', '".$destination_type."', this.value);\">\n";
 				$response .= " 		<option value=''></option>\n";
@@ -540,15 +559,19 @@
 						$selected = (isset($destination_key) && $key == $destination_key) ? "selected='selected'" : '';
 
 						//add multi-lingual support
-						if (file_exists(dirname(__DIR__, 4)."/app/".$key."/app_languages.php")) {
+							if (file_exists(dirname(__DIR__, 4)."/app/".$key."/app_languages.php")) {
 							$text2 = $language2->get($this->language, 'app/'.$key);
 							$found = 'true';
-						}
+							}
 						if ($key == 'other') {
 							$text2 = $language2->get($this->language, 'app/dialplans');
 						}
+
+						//set the group label
+						$group_label = ($text2['label-'.$key] ?? $text2['title-'.$key]);
+
 						//add the application to the select list
-						$response .= "		<option id='{$singular}' class='{$key}' value='".$key."' $selected>".$text2['title-'.$key]."</option>\n";
+						$response .= "		<option id='{$singular}' class='{$key}' value='".$key."' $selected>".$group_label."</option>\n";
 					}
 				}
 				$response .= "	</select>\n";
@@ -567,8 +590,21 @@
 					'type'=>'button',
 					'icon'=>'external-link-alt',
 					'id'=>'btn_dest_go',
-					'title'=>$text2['button-edit'],
-					'onclick'=>"let types = document.getElementById('{$destination_id}_type').options; let opts = document.getElementById('{$destination_id}').options; if(opts[opts.selectedIndex].id && opts[opts.selectedIndex].id.length > 0) {window.open('/app/'+types[types.selectedIndex].className+'/'+types[types.selectedIndex].id+'_edit.php?id='+opts[opts.selectedIndex].id, '_blank');}"
+					'title'=>$text2['button-edit'] ?? '',
+					'onclick'=>"
+						let types = document.getElementById('{$destination_id}_type').options;
+						let opts = document.getElementById('{$destination_id}').options;
+						let selected_type = types[types.selectedIndex].className;
+						let selected_id = opts[opts.selectedIndex].id;
+						if (selected_id && selected_id.length > 0) {
+							// Special case for call_center_queue
+							if (selected_type === 'call_centers') {
+								window.open('/app/'+selected_type+'/call_center_queue_edit.php?id='+selected_id, '_blank');
+							} else {
+								window.open('/app/'+selected_type+'/'+types[types.selectedIndex].id+'_edit.php?id='+selected_id, '_blank');
+							}
+						}
+					"
 				])."\n";
 
 				//debug information
@@ -598,7 +634,6 @@
 			//set default values
 			$destination_name = '';
 			$destination_id = '';
-
 
 			//get the destinations
 			$this->get_destinations();
@@ -710,9 +745,10 @@
 			//predefine the destination value
 			$destination_value = '';
 
-
 			//get the destinations
-			$this->get_destinations();
+			if (empty($this->destinations)) {
+				$this->get_destinations();
+			}
 
 			//remove special characters from the name
 			$destination_id = str_replace("]", "", $destination_name ?? '');
@@ -720,6 +756,9 @@
 
 			//set default to false
 			$select_found = false;
+
+			//create the text object
+			$language2 = new text;
 
 			$i = 0;
 			foreach ($this->destinations as $row) {
@@ -730,7 +769,6 @@
 
 				//add multi-lingual support
 				if (file_exists(dirname(__DIR__, 4)."/app/".$name."/app_languages.php")) {
-					$language2 = new text;
 					$text2 = $language2->get($this->language, 'app/'.$name);
 				}
 
@@ -741,7 +779,7 @@
 						$select_label = $row['select_label'];
 						//echo $select_label." ".__line__." ".$name."<br />\n";
 						foreach ($row['field'] as $key => $value) {
-							if ($key == 'destination' and is_array($value)) {
+							if ($key == 'destination' && is_array($value)) {
 								if ($value['type'] == 'csv') {
 									$array = explode($value['delimiter'], $data[$key]);
 									$select_value = str_replace("\${destination}", $array[0], $select_value);
@@ -769,7 +807,7 @@
 										$select_label = str_replace("\${".$key."}", ($data[$key] ?? ''), $select_label);
 									}
 									else {
-										$select_label = str_replace("\${".$key."}", ($text2['option-'.$label] ?? ''), $select_label);
+										$select_label = str_replace("\${".$key."}", ($text2['option-'.$data['label']] ?? ''), $select_label);
 									}
 								}
 								//application: hangup
@@ -779,11 +817,11 @@
 							}
 						}
 
-						//view_array($data, false);
-						//echo "name ".$name."\n";
-						//echo "select_value ".$select_value."\n";
-						//echo "select_label ".$select_label."\n";
-						//echo "\n";
+						// view_array($data, false);
+						// echo "name ".$name."\n";
+						// echo "select_value ".$select_value."\n";
+						// echo "select_label ".$select_label."\n";
+						// echo "\n";
 
 						$select_value = str_replace("\${domain_name}", $this->domain_name, $select_value);
 						$select_value = str_replace("\${context}", $this->domain_name, $select_value);
@@ -806,7 +844,6 @@
 
 						$i++;
 					}
-					unset($text);
 				}
 				//else {
 				//	//add all main destination categories to the array
@@ -996,6 +1033,7 @@
 						case 5: $sql_date_range = "and start_stamp >= '".date('Y-m-d',strtotime("this week"))." "."00:00:00.000 ".$time_zone."' \n"; break; //this week
 						case 6: $sql_date_range = "and start_stamp >= '".date('Y-m-')."01 "."00:00:00.000 ".$time_zone."'::timestamptz \n"; break; //this month
 						case 7: $sql_date_range = "and start_stamp >= '".date('Y-')."01-01 "."00:00:00.000 ".$time_zone."'::timestamptz \n"; break; //this year
+						case 8: $sql_date_range = "and start_stamp between '".date('Y-m-d',strtotime("first day of last month"))." "."00:00:00.000 ".$time_zone."'::timestamptz and '".date('Y-m-d',strtotime("last day of last month"))." "."23:59:59.999 ".$time_zone."'::timestamptz \n"; break; //prev month
 					}
 				}
 

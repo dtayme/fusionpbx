@@ -51,35 +51,34 @@
 	$db_password = $config->get('database.0.password');
 
 //set the error reporting
-	ini_set('display_errors', '1');
 	$error_reporting_scope = $config->get('error.reporting', 'user');
 	switch ($error_reporting_scope) {
 	case 'user':
 		error_reporting(E_ALL ^ E_NOTICE ^ E_WARNING ^ E_DEPRECATED);
+		//do not display errors to the browser in production (prevents information disclosure)
+		ini_set('display_errors', '0');
 		break;
 	case 'dev':
 		error_reporting(E_ALL ^ E_NOTICE);
+		ini_set('display_errors', '1');
 		break;
 	case 'all':
 		error_reporting(E_ALL);
+		ini_set('display_errors', '1');
 		break;
 	default:
 		error_reporting(E_ALL ^ E_NOTICE ^ E_WARNING ^ E_DEPRECATED);
+		ini_set('display_errors', '0');
 	}
 
-//get the database connection settings
-	//$db_type = $settings['database']['type'];
-	//$db_host = $settings['database']['host'];
-	//$db_port = $settings['database']['port'];
-	//$db_name = $settings['database']['name'];
-	//$db_username = $settings['database']['username'];
-	//$db_password = $settings['database']['password'];
+//set runtime ini settings
+	$max_input_vars = $config->get('php.max_input_vars', '15000');
+	ini_set('max_input_vars', $max_input_vars);
 
 //debug info
 	//echo "Include Path: ".get_include_path()."\n";
 	//echo "Document Root: ".dirname(__DIR__, 1)."\n";
 	//echo "Project Root: ".dirname(__DIR__, 1)."\n";
-
 
 //include global functions
 	require_once __DIR__ . "/functions.php";
@@ -90,11 +89,9 @@
 
 //security headers
 	if (!defined('STDIN') && session_status() === PHP_SESSION_NONE) {
-		header("X-Frame-Options: SAMEORIGIN");
-		header("Content-Security-Policy: frame-ancestors 'self';");
+		header("Content-Security-Policy: frame-ancestors 'self' ".$config->get('security.header.content_security_policy.frame_ancestors').";");
 		header("X-Content-Type-Options: nosniff");
 		header("Referrer-Policy: strict-origin-when-cross-origin");
-		//header("Strict-Transport-Security: max-age=63072000; includeSubDomains; preload");
 	}
 
 //start the session if not using the command line
@@ -109,12 +106,7 @@
 //get the domain_name and the domain_uuid
 	if (empty($_SESSION['domain_uuid'])) {
 		//get the domain from the url
-		$domain_name = $_SERVER["HTTP_HOST"];
-
-		//get the domain name from the http value
-		if (!empty($_REQUEST["domain_name"])) {
-			$domain_name = $_REQUEST["domain_name"];
-		}
+		$domain_name = $_SERVER["HTTP_HOST"] ?? '';
 
 		//remote port number from the domain name
 		$domain_array = explode(":", $domain_name);
@@ -152,11 +144,6 @@
 	if (file_exists(__DIR__ . '/switch.php')) {
 		require_once __DIR__ . '/switch.php';
 	}
-
-//change language on the fly - for translate tool (if available)
-	//if (!defined('STDIN') && isset($_REQUEST['view_lang_code']) && ($_REQUEST['view_lang_code']) != '') {
-	//	$_SESSION['domain']['language']['en-us'] = $_REQUEST['view_lang_code'];
-	//}
 
 //change the domain
 	if (!empty($_GET["domain_uuid"]) && is_uuid($_GET["domain_uuid"]) && !empty($_GET["domain_change"]) && $_GET["domain_change"] == "true" && permission_exists('domain_select')) {

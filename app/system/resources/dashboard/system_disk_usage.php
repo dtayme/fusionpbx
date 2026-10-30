@@ -5,10 +5,7 @@
 
 //check permisions
 	require_once "resources/check_auth.php";
-	if (permission_exists('xml_cdr_view')) {
-		//access granted
-	}
-	else {
+	if (!permission_exists('system_view_hdd')) {
 		echo "access denied";
 		exit;
 	}
@@ -51,7 +48,7 @@
 				<div class='hud_chart' style='width: 175px;'><canvas id='system_disk_usage_chart'></canvas></div>
 
 				<script>
-					const system_disk_usage_chart = new Chart(
+					window.system_disk_usage_chart = new Chart(
 						document.getElementById('system_disk_usage_chart').getContext('2d'),
 						{
 							type: 'doughnut',
@@ -97,6 +94,9 @@
 							}]
 						}
 					);
+					if (window.system_disk_usage_chart.tooltip) {
+						window.system_disk_usage_chart.tooltip._chart = window.system_disk_usage_chart;
+					}
 				</script>
 				<?php
 			}

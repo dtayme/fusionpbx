@@ -18,7 +18,7 @@
 
   The Initial Developer of the Original Code is
   Mark J Crane <markjcrane@fusionpbx.com>
-  Portions created by the Initial Developer are Copyright (C) 2008-2025
+  Portions created by the Initial Developer are Copyright (C) 2008-2026
   the Initial Developer. All Rights Reserved.
 
   Contributor(s):
@@ -96,7 +96,9 @@ if (!function_exists('check_str')) {
 	 * @internal Use parameterized queries
 	 */
 	function check_str($string, $trim = true) {
+		//set global variables
 		global $db_type, $db;
+
 		//when code in db is urlencoded the ' does not need to be modified
 		if ($db_type == "sqlite") {
 			if (function_exists('sqlite_escape_string')) {
@@ -136,28 +138,57 @@ if (!function_exists('check_cidr')) {
 	 * @return bool return true if the IP address is in CIDR or if it is empty
 	 */
 	function check_cidr($cidr, string $ip_address): bool {
+	    // No CIDR restriction
+	    if ($cidr === null || $cidr === '' || $cidr === []) {
+	        return true;
+	    }
 
-		//no cidr restriction
-		if (empty($cidr)) {
-			return true;
-		}
+	    // Handle an array of CIDR ranges
+	    if (is_array($cidr)) {
+	        foreach ($cidr as $range) {
+	            if (check_cidr($range, $ip_address)) {
+	                return true;
+	            }
+	        }
+	        return false;
+	    }
 
-		//check to see if the user's remote address is in the cidr array
-		if (is_array($cidr)) {
-		    	//cidr is an array
-			foreach ($cidr as $value) {
-				if (check_cidr($value, $ip_address)) {
-					return true;
-				}
-			}
-		} else {
-			//cidr is a string
-			[$subnet, $mask] = explode('/', $cidr);
-			return (ip2long($ip_address) & ~((1 << (32 - $mask)) - 1)) == ip2long($subnet);
-		}
+	    // Validate the client IP
+	    $ip = ip2long($ip_address);
+	    if ($ip === false) {
+	        return false;
+	    }
 
-		//value not found in cidr
-		return false;
+	    // Parse "subnet/mask"
+	    $parts  = explode('/', $cidr, 2);
+	    $subnet = $parts[0];
+	    $mask   = $parts[1] ?? '32';
+
+	    // Strict validation: digits only, no signs, no floats, no sci-notation
+	    if (!ctype_digit($mask) || (int) $mask > 32) {
+	        return false;
+	    }
+	    $mask = (int) $mask;
+
+	    $subnet_long = ip2long($subnet);
+	    if ($subnet_long === false) {
+	        return false;
+	    }
+
+	    // /0 matches every IPv4 address
+	    if ($mask === 0) {
+	        return true;
+	    }
+
+	    // /32 → exact match (avoids bit-shift edge case entirely)
+	    if ($mask === 32) {
+	        return $ip === $subnet_long;
+	    }
+
+	    // For 1–31: build the netmask and compare the network portions
+	    $netmask = (~((1 << (32 - $mask)) - 1)) & 0xFFFFFFFF;
+
+	    return ($ip & $netmask) === ($subnet_long & $netmask);
 	}
 }
 
@@ -273,135 +304,100 @@ if (!function_exists('is_xml')) {
 }
 
 if (!function_exists('recursive_copy')) {
-	if (file_exists('/bin/cp')) {
-
-		/**
-		 * Recursively copies the source directory or file to the destination location.
-		 *
-		 * @param string $source      The path of the source directory or file to copy.
-		 * @param string $destination The path where the source will be copied.
-		 * @param string $options     Optional command-line options for the 'cp' command. Defaults to an empty string.
-		 *
-		 * @return void
-		 */
-		function recursive_copy($source, $destination, $options = '') {
-			if (strtoupper(substr(PHP_OS, 0, 3)) === 'SUN') {
-				//copy -R recursive, preserve attributes for SUN
-				$cmd = 'cp -Rp ' . $source . '/* ' . $destination;
+	/**
+	 * Recursively copies a source directory to a destination directory.
+	 *
+	 * @param string $source      The path of the source directory.
+	 * @param string $destination The path where the copy will be created.
+	 * @param array  $options     An associative array of options. Currently not used.
+	 *
+	 * @return void
+	 * @throws Exception If the source directory does not exist or if it fails to create the destination directory.
+	 */
+	function recursive_copy($source, $destination, $options = '') {
+		$dir = opendir($source);
+		// Source must exist
+		if (!$dir) {
+			throw new Exception("recursive_copy() source directory '" . $source . "' does not exist.");
+		}
+		if (!is_dir($destination)) {
+			// Make directory with permissions set to 02770 so that the group can write to the directory and new files will inherit the group
+			if (!mkdir($destination, 02770, true)) {
+				throw new Exception("recursive_copy() failed to create destination directory '" . $destination . "'");
+			}
+		}
+		while (false !== ( $file = readdir($dir))) {
+			// Skip directory pointers
+			if ($file == '.' || $file == '..' ) {
+				continue;
+			}
+			// Check for directory or file and copy accordingly
+			if (is_dir($source . DIRECTORY_SEPARATOR . $file)) {
+				// Call this function to copy files in a subdirectory
+				recursive_copy($source . DIRECTORY_SEPARATOR . $file, $destination . DIRECTORY_SEPARATOR . $file, $options);
 			} else {
-				//copy -R recursive, -L follow symbolic links, -p preserve attributes for other Posix systemss
-				$cmd = 'cp -RLp ' . $options . ' ' . $source . '/* ' . $destination;
+				// Copy the file
+				copy($source . DIRECTORY_SEPARATOR . $file, $destination . DIRECTORY_SEPARATOR . $file);
 			}
-			exec($cmd);
 		}
-
-	} elseif (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-
-		/**
-		 * Recursively copies a source directory to a destination directory.
-		 *
-		 * @param string $source      The path of the source directory to copy.
-		 * @param string $destination The path of the destination directory where the source will be copied.
-		 * @param array  $options     An associative array of options:
-		 *                            - overwrite (bool) Whether to overwrite existing files. Default is false.
-		 *                            - preserve_permissions (bool) Whether to preserve file permissions. Default is true.
-		 *
-		 * @return bool True if the copy was successful, false otherwise.
-		 */
-		function recursive_copy($source, $destination, $options = '') {
-			$source = normalize_path_to_os($source);
-			$destination = normalize_path_to_os($destination);
-			exec("xcopy /E /Y \"$source\" \"$destination\"");
-		}
-
-	} else {
-
-		/**
-		 * Recursively copies a source directory to a destination directory.
-		 *
-		 * @param string $source      The path of the source directory.
-		 * @param string $destination The path where the copy will be created.
-		 * @param array  $options     An associative array of options. Currently not used.
-		 *
-		 * @return void
-		 * @throws Exception If the source directory does not exist or if it fails to create the destination directory.
-		 */
-		function recursive_copy($source, $destination, $options = '') {
-			$dir = opendir($source);
-			if (!$dir) {
-				throw new Exception("recursive_copy() source directory '" . $source . "' does not exist.");
-			}
-			if (!is_dir($destination)) {
-				if (!mkdir($destination, 02770, true)) {
-					throw new Exception("recursive_copy() failed to create destination directory '" . $destination . "'");
-				}
-			}
-			while (false !== ( $file = readdir($dir))) {
-				if (( $file != '.' ) && ( $file != '..' )) {
-					if (is_dir($source . '/' . $file)) {
-						recursive_copy($source . '/' . $file, $destination . '/' . $file);
-					} else {
-						copy($source . '/' . $file, $destination . '/' . $file);
-					}
-				}
-			}
-			closedir($dir);
-		}
-
+		closedir($dir);
 	}
 }
 
 if (!function_exists('recursive_delete')) {
-	if (file_exists('/usr/bin/find')) {
-		/**
-		 * Recursively deletes all files and directories within the given directory.
-		 *
-		 * @param string $directory The directory path to delete files from.
-		 *
-		 * @return void This function does not return a value.
-		 */
-		function recursive_delete($directory) {
-			if (isset($directory) && strlen($directory) > 8) {
-				exec('/usr/bin/find ' . $directory . '/* -name "*" -delete');
-				//exec('rm -Rf '.$directory.'/*');
-				clearstatcache();
+	/**
+	 * Safely deletes a directory and all its contents recursively
+	 *
+	 * @param string $path  The path to the directory to delete
+	 * @param int    $depth The current depth of recursion (used internally)
+	 *
+	 * @return bool True on success, false on failure
+	 */
+	function recursive_delete($path, int $depth = 0): bool {
+		// Verify the path exists and is a directory
+		if (!file_exists($path) || !is_dir($path)) {
+			return false;
+		}
+
+		// Prepare the directory handle
+		$handle = opendir($path);
+
+		// No handle, send a false return to indicate failure
+		if (!$handle) return false;
+
+		// Loop through all files and subdirectories
+		while (false !== ($file = readdir($handle))) {
+			// Skip '.' and '..' as they refer to the current and parent directory
+			if ($file == '.' || $file == '..') {
+				continue;
 			}
-		}
-	} elseif (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-		/**
-		 * Recursively deletes the given directory and all its contents.
-		 *
-		 * @param string $directory The directory to delete. If the path is not normalized, it will be converted using normalize_path_to_os().
-		 *
-		 * @return bool True if the deletion was successful, false otherwise.
-		 */
-		function recursive_delete($directory) {
-			$directory = normalize_path_to_os($directory);
-			//$this->write_debug("del /S /F /Q \"$dir\"");
-			exec("del /S /F /Q \"$directory\"");
-			clearstatcache();
-		}
-	} else {
-		/**
-		 * Recursively deletes files and directories in the given directory.
-		 *
-		 * @param string $directory The path to the directory containing files/directories to delete.
-		 *
-		 * @return bool True if all files/directories were successfully deleted, false otherwise.
-		 */
-		function recursive_delete($directory) {
-			foreach (glob($directory) as $file) {
-				if (is_dir($file)) {
-					//$this->write_debug("rm dir: ".$file);
-					recursive_delete("$file/*");
-					rmdir($file);
-				} else {
-					//$this->write_debug("delete file: ".$file);
-					unlink($file);
+
+			// Set the full path
+			$full_path = $path . DIRECTORY_SEPARATOR . $file;
+
+			// If this is a directory, recursively delete it
+			if (is_dir($full_path)) {
+				if (!recursive_delete($full_path, ++$depth)) {
+					// If the recursive delete fails, close the directory handle and return false to indicate failure
+					closedir($handle);
+					return false;
 				}
 			}
-			clearstatcache();
+			else {
+				// If this is a file, delete it
+				if (!unlink($full_path)) {
+					// If the file cannot be deleted, close the directory handle and return false to indicate failure
+					closedir($handle);
+					return false;
+				}
+			}
 		}
+
+		// Close the directory handle
+		closedir($handle);
+
+		// Remove the now-empty directory only when depth is greater than 0 to prevent deletion of the original path
+		return $depth > 0 ? rmdir($path) : true;
 	}
 }
 
@@ -627,76 +623,86 @@ if (!function_exists('th_order_by')) {
 	/**
 	 * Generates the HTML for a table header cell with ordering functionality.
 	 *
-	 * @param string $field_name      The name of the field used for ordering.
-	 * @param string $column_title    The title to display in the column header.
-	 * @param string|null $order_by        The current order by field.
-	 * @param string|null $order           The current sorting direction ('asc' or 'desc'). Default is 'asc'.
-	 * @param string|null $app_uuid        Optional application UUID parameter. Default is an empty string.
-	 * @param string|null $css             Optional CSS classes for the table header cell. Default is an empty string.
-	 * @param string|null $http_get_params Optional additional HTTP GET parameters to include in the ordering URL. Default is an empty string.
-	 * @param string|null $description     Optional description text to be included in the title attribute of the column header link. Default is an empty string.
+	 * @param string       $field_name      The name of the field used for ordering.
+	 * @param string       $column_title    The title to display in the column header.
+	 * @param string|null  $order_by        The current order by field.
+	 * @param string|null  $order           The current sorting direction ('asc' or 'desc'). Default is 'asc'.
+	 * @param string|null  $app_uuid        Optional application UUID parameter. Default is an empty string.
+	 * @param string|null  $css             Optional CSS classes for the table header cell. Default is an empty string.
+	 * @param string|array $http_get_params Optional additional HTTP GET parameters to include in the ordering URL. Default is an empty array.
+	 * @param string|null  $description     Optional description text to be included in the title attribute of the column header link. Default is an empty string.
 	 *
 	 * @return string The generated HTML for the table header cell with ordering functionality.
 	 */
-	function th_order_by(string $field_name, string $column_title, ?string $order_by, ?string $order, ?string $app_uuid = '', ?string $css = '', ?string $http_get_params = '', ?string $description = ''): string {
+	function th_order_by(string $field_name, string $column_title, ?string $order_by, ?string $order = '', ?string $app_uuid = '', ?string $css = '', $http_get_params = [], ?string $description = ''): string {
 		global $text;
 		if (is_uuid($app_uuid) > 0) {
 			$app_uuid = "&app_uuid=" . urlencode($app_uuid);
-		} // accommodate the need to pass app_uuid where necessary (inbound/outbound routes lists)
+		} // Accommodate the need to pass app_uuid where necessary (inbound/outbound routes lists)
 
+		// Sanitize field_name
 		$field_name = preg_replace("#[^a-zA-Z0-9_]#", "", $field_name);
-		$field_value = preg_replace("#[^a-zA-Z0-9_]#", "", $field_value ?? '');
 
+		// Sanitize the parameters
 		$sanitized_parameters = '';
+		$has_order_by = false;
 		if (!empty($http_get_params)) {
-			$parameters = explode('&', $http_get_params);
-			if (is_array($parameters)) {
-				foreach ($parameters as $parameter) {
-					if (substr_count($parameter, '=') != 0) {
-						$array = explode('=', $parameter);
-						$key = preg_replace('#[^a-zA-Z0-9_\-]#', '', $array['0']);
-						$value = urldecode($array['1']);
-						if ($key == 'order_by' && !empty($value)) {
-							//validate order by
-							$sanitized_parameters .= "&order_by=" . preg_replace('#[^a-zA-Z0-9_\-]#', '', $value);
-						} else if ($key == 'order' && !empty($value)) {
-							//validate order
-							switch ($value) {
-								case 'asc':
-									$sanitized_parameters .= "&order=asc";
-									break;
-								case 'desc':
-									$sanitized_parameters .= "&order=desc";
-									break;
-							}
-						} else if (!empty($value) && is_numeric($value)) {
-							$sanitized_parameters .= "&" . $key . "=" . $value;
-						} else {
-							$sanitized_parameters .= "&" . $key . "=" . urlencode($value);
-						}
+			$params = $http_get_params;
+
+			if (is_string($params)) {
+				parse_str($http_get_params, $params);
+			}
+
+			foreach ($params as $key => $value) {
+				if ($key == 'order_by' && !empty($value)) {
+					$has_order_by = true;
+					// Validate order by
+					$order_by = preg_replace('#[^a-zA-Z0-9_\-]#', '', $value);
+				} else if ($key == 'order' && !empty($value)) {
+					$has_order_by = true;
+					// Validate order
+					if (in_array(strtolower($value), ['asc', 'desc'])) {
+						$order = strtolower($value);
 					}
+				} else {
+					$sanitized_parameters .= "&" . preg_replace('#[^a-zA-Z0-9_\-]#', '', $key) . "=" . urlencode($value);
 				}
 			}
 		}
 
-		$html = "<th " . $css . " nowrap='nowrap'>";
-		$description = empty($description) ? '' : $description . ', ';
-		if (empty($order_by)) {
-			$order = 'asc';
+		// Default order to asc on first call and when order_by changes
+		if (empty($order_by) || $order_by !== $field_name) {
+			$next_order = 'asc';
 		}
-		if ($order_by == $field_name) {
-			if ($order == "asc") {
-				$description .= $text['label-order'] . ' ' . $text['label-descending'];
-				$html .= "<a href='?order_by=" . urlencode($field_name) . "&order=desc" . $app_uuid . $sanitized_parameters . "' title=\"" . escape($description) . "\">" . escape($column_title) . "</a>";
+		else {
+			// Toggle order direction
+			$next_order = ($order == 'asc') ? 'desc' : 'asc';
+		}
+
+		// Build the URL
+		$url_params = "?order_by=" . urlencode($field_name) . "&order=" . $next_order . $app_uuid . $sanitized_parameters;
+		if ($order_by === $field_name) {
+			if ($next_order == "asc") {
+				$description .= ', ' . $text['label-order'] . ' ' . $text['label-descending'];
 			} else {
-				$description .= $text['label-order'] . ' ' . $text['label-ascending'];
-				$html .= "<a href='?order_by=" . urlencode($field_name) . "&order=asc" . $app_uuid . $sanitized_parameters . "' title=\"" . escape($description) . "\">" . escape($column_title) . "</a>";
+				$description .= ', ' . $text['label-order'] . ' ' . $text['label-ascending'];
 			}
-		} else {
-			$description .= $text['label-order'] . ' ' . $text['label-ascending'];
-			$html .= "<a href='?order_by=" . urlencode($field_name) . "&order=asc" . $app_uuid . $sanitized_parameters . "' title=\"" . escape($description) . "\">" . escape($column_title) . "</a>";
 		}
-		$html .= "</th>";
+
+		// Build the HTML
+		$html = "<th $css nowrap='nowrap'>\n";
+		if (!empty($description)) {
+			$html .= "	<a href='$url_params' title=\"" . escape(trim($description, ', ')) . "\">" . escape($column_title) . "\n";
+		} else {
+			$html .= "	<a href='$url_params'>" . escape($column_title) . "\n";
+		}
+		if ($has_order_by && $order_by === $field_name && $order == "desc") {
+			$html .= "		<i class='fa-solid fa-sort-down' style='position: absolute; padding: 0 0 6px 6px;'></i>\n";
+		} else if ($has_order_by && $order_by === $field_name) {
+			$html .= "		<i class='fa-solid fa-sort-up' style='position: absolute; padding: 6px 0 0 6px;'></i>\n";
+		}
+		$html .= "	</a>\n";
+		$html .= "</th>\n";
 		return $html;
 	}
 }
@@ -1094,10 +1100,11 @@ function format_string(string $format, string $data): string {
  * @return string|null The formatted phone number if the input matches any defined format, otherwise the original input.
  */
 function format_phone(?string $phone_number): ?string {
+	global $settings;
 	if (is_numeric(trim($phone_number ?? '', ' +'))) {
-		if (isset($_SESSION["format"]["phone"])) {
+		if (!empty($settings->get('format', 'phone'))) {
 			$phone_number = trim($phone_number, ' +');
-			foreach ($_SESSION["format"]["phone"] as $format) {
+			foreach ($settings->get('format', 'phone') as $format) {
 				$format_count = substr_count($format, 'x');
 				$format_count = $format_count + substr_count($format, 'R');
 				$format_count = $format_count + substr_count($format, 'r');
@@ -1299,14 +1306,13 @@ function tail(string $file, int $num_to_get = 10): string {
 	return $ret;
 }
 
-//generate a random password with upper, lowercase and symbols
 /**
  * Generates a random password of specified length and strength.
  *
- * @param int $length   The desired length of the password. Defaults to 0 if not provided.
+ * @param int $length   The desired length of the password. Defaults to 20 if not provided.
  * @param int $strength The desired strength level of the password.
  *                      This defaults to 3 if not provided. The higher level includes the previous levels.
- *                      If the password_strength was set to 3, this would include numeric, lowercase, and uppercase letters.
+ *                      If the password_strength were set to 3, this would include numeric, lowercase, and uppercase letters.
  *                      - Level 1: Numeric
  *                      - Level 2: Lowercase letters
  *                      - Level 3: Uppercase letters
@@ -1315,7 +1321,7 @@ function tail(string $file, int $num_to_get = 10): string {
  * @return string The generated password.
  * @throws \Random\RandomException
  */
-function generate_password(int $length = 0, int $strength = 3): string {
+function generate_password(int $length = 20, int $strength = 3): string {
 	//define the global variables
 	global $settings;
 
@@ -2585,20 +2591,20 @@ function event_socket_mkdir($dir) {
 
 /**
 * Escape the user data
-* <p>Escapes all characters that have HTML character entity
+* <p>Escapes & " ' < and > characters</p>
 * @param string $string the value to escape
 * @return string
-* @link https://www.php.net/htmlentities
+* @link https://www.php.net/htmlspecialchars
 */
 function escape($string) {
 	if (is_string($string)) {
-		return htmlentities($string, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+		return htmlspecialchars($string, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 	} elseif (is_numeric($string)) {
 		return $string;
 	} else {
 		$string = (array) $string;
 		if (isset($string[0])) {
-			return htmlentities($string[0], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+			return htmlspecialchars($string[0], ENT_QUOTES | ENT_HTML5, 'UTF-8');
 		}
 	}
 	return false;
@@ -2835,7 +2841,7 @@ if (!function_exists('byte_convert')) {
 			$bytes = $bytes / $step;
 			$i++;
 		}
-		return round($bytes, $precision) . ' ' . $units[$i];
+		return round($bytes ?? 0, $precision) . ' ' . $units[$i];
 	}
 }
 
@@ -2905,6 +2911,46 @@ if (!function_exists('array_key_first')) {
 			return $key;
 		}
 		return NULL;
+	}
+}
+
+// Define function array_diff_deep to return the difference between arrays
+if (!function_exists('array_diff_deep')) {
+	function array_diff_deep($array1, $array2) {
+		// Guard clause: Handle non-array inputs safely
+		if (!is_array($array1) || !is_array($array2)) {
+			return ($array1 !== $array2) ? ['old' => $array1, 'new' => $array2] : [];
+		}
+
+		// Initialize the diff array
+		$diff = [];
+
+		// Compare keys in array1 against array2
+		foreach ($array1 as $key => $value) {
+			// Defensive check ensures array_key_exists only receives an array (PHP 8+ safe)
+			if (!is_array($array2) || !array_key_exists($key, $array2)) {
+				$diff[$key] = ['removed' => $value];
+			}
+			elseif (is_array($value) && is_array($array2[$key])) {
+				// Recurse only when both sides are arrays
+				$sub_diff = array_diff_deep($value, $array2[$key]);
+				if ($sub_diff !== []) {
+					$diff[$key] = $sub_diff;
+				}
+			}
+			elseif ($value !== $array2[$key]) {
+				$diff[$key] = ['old' => $value, 'new' => $array2[$key]];
+			}
+		}
+
+		// Compare keys in array2 against array1 (find added keys)
+		foreach ($array2 as $key => $value) {
+			if (!is_array($array1) || !array_key_exists($key, $array1)) {
+				$diff[$key] = ['added' => $value];
+			}
+		}
+
+		return $diff;
 	}
 }
 
@@ -3325,5 +3371,25 @@ if (!function_exists('mb_convert_encoding')) {
 		}
 
 		return $result;
+	}
+}
+
+/**
+ * Returns the label cell CSS class based on whether the given field is required.
+ *
+ * If the field is present in the required fields list (e.g. extension/required),
+ * the class "vncellreq" is returned; otherwise, the default "vncell" class is used.
+ *
+ * @param string   $field          The field name to check.
+ * @param string[] $required_fields Array of field names considered required.
+ *
+ * @return string "vncellreq" if the field is required, "vncell" otherwise.
+ */
+if (!function_exists('required_field_vncell_class')) {
+	function required_field_vncell_class(string $field, $required_fields): string {
+		if (is_array($required_fields) && in_array($field, $required_fields, true)) {
+			return "vncellreq";
+		}
+		return "vncell";
 	}
 }

@@ -218,17 +218,17 @@ class database {
 	public $fields;
 
 	/**
-	 * Unknown property
+	 * Stores the row count
 	 *
-	 * @var unknown
+	 * @var int
 	 * @access public
 	 */
 	public $count;
 
 	/**
-	 * Unknown property
+	 * Stores the SQL Query String
 	 *
-	 * @var unknown
+	 * @var string
 	 * @access public
 	 */
 	public $sql;
@@ -297,10 +297,10 @@ class database {
 	/**
 	 * Table name.
 	 *
-	 * @access private
+	 * @access public
 	 * @var string sanitized
 	 */
-	private $table;
+	public $table;
 
 	/**
 	 * <p>Stores the result from the most recent query. The type will be based on what was requested.</p>
@@ -464,7 +464,10 @@ class database {
 				// mysql pdo connection
 				if (strlen($this->host) == 0 && empty($this->port)) {
 					// if both host and port are empty use the unix socket
-					$this->db = new PDO("mysql:host=$this->host;unix_socket=/var/run/mysqld/mysqld.sock;dbname=$this->db_name", $this->username, $this->password);
+					$this->db = new PDO("mysql:host=$this->host;unix_socket=/var/run/mysqld/mysqld.sock;dbname=$this->db_name", $this->username, $this->password, [
+						PDO::ATTR_ERRMODE,
+						PDO::ERRMODE_EXCEPTION,
+					]);
 				} else {
 					if (empty($this->port)) {
 						// leave out port if it is empty
@@ -746,7 +749,7 @@ class database {
 				$this->db_name = self::sanitize($value);
 				break;
 			case 'db':
-				if ($name instanceof PDO) {
+				if ($value instanceof PDO) {
 					$this->db = $value;
 				} else {
 					trigger_error('db property must be a PDO object!', E_USER_ERROR);
@@ -778,6 +781,10 @@ class database {
 				}
 				break;
 			case 'app_uuid':
+				if (is_uuid($value)) {
+					$this->app_uuid = $value;
+				}
+				break;
 			case 'domain_uuid':
 				if (is_uuid($value)) {
 					$this->domain_uuid = $value;
@@ -795,23 +802,21 @@ class database {
 						break;
 					default:
 						trigger_error('Type/Driver must be set to pgsql,mysql,sqlite,odbc', E_USER_ERROR);
-						break;
 				}
+				break;
 			case 'offset':
 			case 'limit':
 				if (is_int($value)) {
-					$this->$name = $value;
+					$this->{$name} = $value;
 				} else {
 					trigger_error('Offset or Limit not set to valid integer. Resetting to zero!', E_USER_WARNING);
 				}
 				break;
 			case '':
 				trigger_error('Database property must not be empty', E_USER_ERROR);
-				break;
 			case 'null':
 			case null:
 				trigger_error('Database property must not be null', E_USER_ERROR);
-				break;
 			case 'debug':
 				$this->debug = $value;
 		}
@@ -822,11 +827,35 @@ class database {
 	 *
 	 * @param string $value To be sanitized
 	 *
-	 * @return string Sanitized using preg_replace('#[^a-zA-Z0-9_\-]#', '')
+	 * @return string Sanitized using preg_replace('#[^a-zA-Z0-9_]#', '')
 	 * @see preg_replace()
 	 */
 	public static function sanitize(string $value) {
-		return preg_replace('#[^a-zA-Z0-9_\-]#', '', $value);
+		return preg_replace('#[^a-zA-Z0-9_]#', '', $value);
+	}
+
+	/**
+	 * Returns a sanitized string value safe for a UUID.
+	 *
+	 * @param string $value To be sanitized
+	 *
+	 * @return string Sanitized using preg_replace('#[^a-zA-Z0-9\-]#', '')
+	 * @see preg_replace()
+	 */
+	public static function sanitize_uuid(string $value) {
+		return preg_replace('#[^a-zA-Z0-9\-]#', '', $value);
+	}
+
+	/**
+	 * Returns true if the value is a valid SQL identifier.
+	 * A valid identifier starts with a letter or underscore followed by letters, digits, or underscores.
+	 *
+	 * @param string $value To be validated
+	 *
+	 * @return boolean
+	 */
+	public static function is_valid_identifier(string $value) {
+		return (bool) preg_match('/^[a-z_][a-z0-9_]*$/i', $value);
 	}
 
 	/**
@@ -940,7 +969,7 @@ class database {
 					return $prep_statement->fetchAll(PDO::FETCH_ASSOC);
 				case 'row':
 					return $prep_statement->fetch(PDO::FETCH_ASSOC);
-				case 'column';
+				case 'column':
 					return $prep_statement->fetchColumn();
 				default:
 					return $prep_statement->fetchAll(PDO::FETCH_ASSOC);
@@ -1031,6 +1060,12 @@ class database {
 	 * @depends connect()
 	 */
 	public function table_exists(string $table_name) {
+		// Only add prefix if it's not already prefixed AND prefix is not empty
+		if (!empty(self::TABLE_PREFIX) && !str_starts_with($table_name, self::TABLE_PREFIX)) {
+			$table_name = self::TABLE_PREFIX . $table_name;
+		}
+
+		// Check to see if the table was sanitized
 		if (self::sanitize($table_name) != $table_name) {
 			trigger_error('Table Name must be sanitized', E_USER_WARNING);
 			return false;
@@ -1230,6 +1265,16 @@ class database {
 		if (empty($this->table)) {
 			return false;
 		}
+
+		// validate the table name and db name are safe identifiers before interpolation
+		if (!self::is_valid_identifier($this->table) || !self::is_valid_identifier($this->db_name)) {
+			trigger_error('Table Name or DB Name must be a valid identifier', E_USER_WARNING);
+			return false;
+		}
+
+		// initialize the parameters array
+		$parameters = array();
+
 		if ($this->type == 'sqlite') {
 			$sql = 'PRAGMA table_info(' . $this->table . ');';
 		}
@@ -1242,9 +1287,11 @@ class database {
 			$sql .= 'character_maximum_length, ';
 			$sql .= 'numeric_precision ';
 			$sql .= 'FROM information_schema.columns ';
-			$sql .= "WHERE table_name = '" . $this->table . "' ";
-			$sql .= "and table_catalog = '" . $this->db_name . "' ";
+			$sql .= "WHERE table_name = :table_name ";
+			$sql .= "and table_catalog = :table_catalog ";
 			$sql .= 'ORDER BY ordinal_position; ';
+			$parameters['table_name'] = $this->table;
+			$parameters['table_catalog'] = $this->db_name;
 		}
 		if ($this->type == 'mysql') {
 			$sql = 'DESCRIBE ' . $this->table . ';';
@@ -1252,11 +1299,14 @@ class database {
 		if ($this->type == 'mssql') {
 			$sql = "SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '" . $this->table . "'";
 		}
-		$prep_statement = $this->db->prepare($sql);
-		$prep_statement->execute();
+		if (!empty($sql)) {
+			$prep_statement = $this->db->prepare($sql);
+			$prep_statement->execute($parameters);
+			return $prep_statement->fetchAll(PDO::FETCH_ASSOC);
+		}
 
 		// set the result array
-		return $prep_statement->fetchAll(PDO::FETCH_ASSOC);
+		return false;
 	}
 
 	/**
@@ -1287,6 +1337,7 @@ class database {
 
 		// get data from the database
 		$sql = 'select * from ' . $this->table . ' ';
+		$params = [];
 		if ($this->where) {
 			$i = 0;
 			if (is_array($this->where)) {
@@ -1409,6 +1460,7 @@ class database {
 		// loop through the array
 		$checked = false;
 		$x = 0;
+		$parent_name = null;
 		foreach ($array as $parent_name => $tables) {
 			if (is_array($tables)) {
 				// get the application name and uuid
@@ -1479,6 +1531,7 @@ class database {
 
 		// get the current data
 		if (count($new_array) > 0) {
+			$old_array = [];
 			// build an array of tables, fields, and values
 			foreach ($new_array as $table_name => $rows) {
 				foreach ($rows as $row) {
@@ -1518,7 +1571,8 @@ class database {
 						}
 					}
 				}
-				if (isset($field_value) && $field_value != '') {
+				// only execute when the table actually has rows to fetch
+				if (!empty($rows) && !empty($sql) && !empty($parameters)) {
 					$results = $this->execute($sql, $parameters, 'all');
 					unset($parameters);
 					if (is_array($results)) {
@@ -1962,6 +2016,7 @@ class database {
 
 		// build the query
 		$sql = 'SELECT * FROM ' . self::TABLE_PREFIX . $this->name . ' ';
+		$params = [];
 		if (isset($this->uuid)) {
 			// get the specific uuid
 			$sql .= 'WHERE ' . self::singular($this->name) . "_uuid = '" . $this->uuid . "' ";
@@ -1994,9 +2049,9 @@ class database {
 
 						// build the sql
 						if ($i == 0) {
-							$sql .= 'WHERE ' . $row['name'] . ' ' . $row['operator'] . ' :' . $row['value'] . ' ';
+							$sql .= 'WHERE ' . $row['name'] . ' ' . $row['operator'] . ' :' . $row['name'] . ' ';
 						} else {
-							$sql .= 'AND ' . $row['name'] . ' ' . $row['operator'] . ' :' . $row['value'] . ' ';
+							$sql .= 'AND ' . $row['name'] . ' ' . $row['operator'] . ' :' . $row['name'] . ' ';
 						}
 					}
 					// add the name and value to the params array
@@ -2299,7 +2354,7 @@ class database {
 	 *                     Second dimension in the row value as int. Third dimension is the column name.
 	 * @param bool  $transaction_save
 	 *
-	 * @return returns an array with result details
+	 * @return array|false an array with result details
 	 */
 	public function save(array &$array, bool $transaction_save = true) {
 		// prepare the values
@@ -2373,7 +2428,15 @@ class database {
 							}
 
 							// allow characters found in the UUID only.
-							$parent_key_value = self::sanitize($parent_key_value);
+							if (!is_uuid($parent_key_value)) {
+								if ($this->db->inTransaction()) {
+									$this->db->rollback();
+								}
+								$this->message['type'] = 'error';
+								$this->message['code'] = '400';
+								$this->message['message'] = 'Invalid UUID: ' . $parent_key_value;
+								return false;
+							}
 
 							// get the parent field names
 							$parent_field_names = [];
@@ -2396,6 +2459,10 @@ class database {
 										$prep_statement->execute();
 										$parent_results = $prep_statement->fetchAll(PDO::FETCH_ASSOC);
 									} catch (PDOException $e) {
+										// rollback the transaction on error
+										if ($this->db->inTransaction()) {
+											$this->db->rollback();
+										}
 										$message['type'] = 'error';
 										$message['code'] = $e->getCode();
 										$message['message'] = $e->getMessage();
@@ -2551,7 +2618,6 @@ class database {
 									// validate changes
 									$data_modified = false;
 									if (is_array($parent_field_array)) {
-										$i = 0;
 										foreach ($parent_field_array as $array_key => $array_value) {
 											// skip child array
 											if (is_array($array_value)) {
@@ -2559,7 +2625,7 @@ class database {
 											}
 
 											// get the variable type of the value
-											$database_field_type = gettype($parent_results[$i][$array_key]);
+											$database_field_type = gettype($parent_results[0][$array_key]);
 											$user_field_type = gettype($array_value);
 
 											// trim the string and update the value
@@ -2599,15 +2665,12 @@ class database {
 											}
 
 											// verify if the data in the database has been modified
-											if ($parent_results[$i][$array_key] !== $array_value) {
+											if ($parent_results[0][$array_key] !== $array_value) {
 												// not matched
-												// echo "$parent_name.$array_key ".($parent_results[$i][$array_key])." != ".$array_value."\n\n";
+												// echo "$parent_name.$array_key ".($parent_results[0][$array_key])." != ".$array_value."\n\n";
 												$data_modified = true;
 												break;
 											}
-
-											// increment the id
-											$i;
 										}
 									}
 
@@ -2792,7 +2855,15 @@ class database {
 
 											// allow characters found in the uuid only
 											if (isset($child_key_value)) {
-												$child_key_value = self::sanitize($child_key_value);
+												if (!is_uuid($child_key_value)) {
+													if ($this->db->inTransaction()) {
+														$this->db->rollback();
+													}
+													$this->message['type'] = 'error';
+													$this->message['code'] = '400';
+													$this->message['message'] = 'Invalid child key UUID: ' . $child_key_value;
+													return false;
+												}
 											}
 
 											// get the child field names
@@ -2825,6 +2896,10 @@ class database {
 													}
 													unset($prep_statement);
 												} catch (PDOException $e) {
+													// rollback the transaction on error
+													if ($this->db->inTransaction()) {
+														$this->db->rollback();
+													}
 													$message['message'] = $e->getMessage();
 													$message['code'] = $e->getCode();
 													$message['line'] = $e->getLine();
@@ -3363,7 +3438,7 @@ class database {
 				return false;
 			}
 		}
-		return $this->message;
+		return $retval ? $this->message : false;
 	}
 
 	/**
@@ -3628,7 +3703,7 @@ class database {
 			$pg_indexes = $prep_statement->fetchAll(PDO::FETCH_NAMED);
 			$database_indexes = array();
 			foreach($pg_indexes as $row) {
-				$database_indexes[$row['table']][$row['index_name']] = $row['definition'];
+				$database_indexes[$row['index_name']] = $row['definition'];
 			}
 		}
 		return $database_indexes;
@@ -3673,8 +3748,13 @@ class database {
 				continue;
 			}
 
-			// loop through all columns in the table
-			foreach ($table['fields'] as $column) {
+		// skip tables that don't exist in the database
+		if (!$this->table_exists($table_name)) {
+			continue;
+		}
+
+		// loop through all columns in the table
+		foreach ($table['fields'] as $column) {
 				// skip deprecated columns
 				if (isset($column['deprecated'])) {
 					continue;
@@ -3692,10 +3772,17 @@ class database {
 						}
 
 						// create the database index - postgresql index name limited to 63 bytes
-						if ($this->type == 'pgsql' && !isset($database_indexes[$table_name][substr($table_name . "_" . $column_name . "_fkey", 0, 63)])) {
-							$sql = "CREATE INDEX IF NOT EXISTS " . $table_name . "_" . $column_name . "_fkey ON " . $table_name . " (" . $column_name . ");\n";
+						$index_name = substr($table_name . "_" . $column_name . "_fkey", 0, 63);
+						if ($this->type == 'pgsql' && !isset($database_indexes[$index_name])) {
+							// add the database index
+							$sql = "CREATE INDEX " . $index_name . " ON " . $table_name . " (" . $column_name . ");\n";
 							$prep_statement = $this->db->prepare($sql);
 							$prep_statement->execute();
+
+							// add the new index to the database indexes array
+							$database_indexes[$index_name] = $sql;
+
+							// build the results array
 							$row['table_name'] = $table_name;
 							$row['column_name'] = $column_name;
 							$row['sql'] = $sql;

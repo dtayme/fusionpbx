@@ -35,13 +35,7 @@ class provision {
 
 	const app_uuid = 'abf28ead-92ef-3de6-ebbb-023fbc2b6dd3';
 
-	/**
-	 * Domain UUID set in the constructor. This can be passed in through the $settings_array associative array or set
-	 * in the session global array
-	 *
-	 * @var string
-	 */
-	public $domain_uuid;
+
 
 	/**
 	 * Domain name set in the constructor. This can be passed in through the $settings_array associative array or set
@@ -54,6 +48,7 @@ class provision {
 	/**
 	 * declare public variables
 	 */
+	public $device_uuid;
 	public $template_dir;
 	public $device_address;
 	public $device_template;
@@ -72,6 +67,14 @@ class provision {
 	 * @var settings Settings Object
 	 */
 	private $settings;
+
+	/**
+	 * Domain UUID set in the constructor. This can be passed in through the $settings_array associative array or set
+	 * in the session global array
+	 *
+	 * @var string
+	 */
+	private $domain_uuid;
 
 	/**
 	 * User UUID set in the constructor. This can be passed in through the $settings_array associative array or set in
@@ -98,9 +101,9 @@ class provision {
 	 */
 	public function __construct(array $setting_array = []) {
 		// set domain and user UUIDs
-		$this->domain_uuid = $setting_array['domain_uuid'] ?? $_SESSION['domain_uuid'] ?? '';
-		$this->domain_name = $setting_array['domain_name'] ?? $_SESSION['domain_name'] ?? '';
-		$this->user_uuid = $setting_array['user_uuid'] ?? $_SESSION['user_uuid'] ?? '';
+		$this->domain_uuid = $setting_array['domain_uuid'] ?? '';
+		$this->domain_name = $setting_array['domain_name'] ?? '';
+		$this->user_uuid = $setting_array['user_uuid'] ?? '';
 
 		// set objects
 		$this->database = $setting_array['database'] ?? database::new();
@@ -164,7 +167,119 @@ class provision {
 		return $this->domain_uuid;
 	}
 
-	// define the function which checks to see if the device address exists in devices
+	/**
+	 * Resolve provisioning request parameters (mac / file / ext) from the request
+	 * path.
+	 *
+	 * Mirrors the web-server rewrite rules (nginx / Apache .htaccess) so the
+	 * provisioning app works without them (e.g. behind the single-point-of-entry
+	 * front controller). Rules are evaluated in the same order, first match wins.
+	 * A value is only filled in if it is still empty, so parameters supplied by
+	 * the web server (query strings) always take precedence.
+	 *
+	 * @param string $path     Decoded request path, e.g. /provision/y000000000000.boot
+	 * @param array  $context  Existing values; keys: address, file, ext
+	 *
+	 * @return array Resolved values; keys: address, file, ext
+	 */
+	public static function resolve_from_path(string $path, array $context): array {
+		$address = $context['address'] ?? '';
+		$file    = $context['file'] ?? '';
+		$ext     = $context['ext'] ?? '';
+
+		// Only fill a value when it is still empty, so existing values win.
+		$set_if_empty = function (string &$value, string $candidate): void {
+			if ($value === '' && $candidate !== '') {
+				$value = $candidate;
+			}
+		};
+
+		// Vendor rules, in the same order as the nginx / Apache rewrite rules.
+		if (preg_match('#/provision/algom([A-Fa-f0-9]{12})\.conf$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Algo
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})\.txt$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Avaya
+		} elseif (preg_match('#/provision/MN_([A-Fa-f0-9]{12})\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Mitel
+			$set_if_empty($file, 'MN_{$mac}.cfg');
+		} elseif (preg_match('#/provision/MN_Generic\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, '08000f000000');         // Mitel (generic)
+			$set_if_empty($file, 'MN_Generic.cfg');
+		} elseif (preg_match('#/provision/cfg([A-Fa-f0-9]{12})(?:\.(xml|cfg))?$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Grandstream
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})/phonebook\.xml$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Grandstream
+			$set_if_empty($file, 'phonebook.xml');
+		} elseif (preg_match('#/provision/phonebook\.xml$#i', $path, $match)) {
+			$set_if_empty($file, 'phonebook.xml');           // Grandstream
+		} elseif (preg_match('#/provision/aastra\.cfg$#i', $path, $match)) {
+			$set_if_empty($file, 'aastra.cfg');              // Aastra
+		} elseif (preg_match('#/provision/(y[0-9]{12})\.cfg$#i', $path, $match)) {
+			$set_if_empty($file, $match[1] . '.cfg');        // Yealink
+		} elseif (preg_match('#/provision/(y[0-9]{12})\.boot$#i', $path, $match)) {
+			$set_if_empty($file, $match[1] . '.boot');       // Yealink
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})\.boot$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Yealink
+			$set_if_empty($file, '{$mac}.boot');
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})(?:\.(xml|cfg))?$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Yealink (general)
+		} elseif (preg_match('#/provision/000000000000\.cfg$#i', $path, $match)) {
+			$set_if_empty($file, '{$mac}.cfg');              // Polycom
+		} elseif (preg_match('#/provision/features\.cfg$#i', $path, $match)) {
+			$set_if_empty($file, 'features.cfg');            // Polycom
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})-sip\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Polycom
+			$set_if_empty($file, 'sip.cfg');
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})-phone\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Polycom
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})-registration\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Polycom
+			$set_if_empty($file, '{$mac}-registration.cfg');
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})-directory\.xml$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Polycom
+			$set_if_empty($file, '{$mac}-directory.xml');
+		} elseif (preg_match('#/provision/file/(.*\.(xml|cfg))$#i', $path, $match)) {
+			$set_if_empty($file, $match[1]);                 // Cisco
+		} elseif (preg_match('#/provision/directory\.xml$#i', $path, $match)) {
+			$set_if_empty($file, 'directory.xml');           // Cisco
+		} elseif (preg_match('#/provision/([0-9]{1,11})_Extern\.xml$#i', $path, $match)) {
+			$set_if_empty($ext, $match[1]);                  // Escene
+			$set_if_empty($file, '{$mac}_extern.xml');
+		} elseif (preg_match('#/provision/([0-9]{1,11})_Phonebook\.xml$#i', $path, $match)) {
+			$set_if_empty($ext, $match[1]);                  // Escene
+			$set_if_empty($file, '{$mac}_phonebook.xml');
+		} elseif (preg_match('#/provision/VCS754_([A-Fa-f0-9]{12})\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // V-tech
+		} elseif (preg_match('#/provision/pb([A-Fa-f0-9-]{12,17})/directory\.xml$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // V-tech
+			$set_if_empty($file, 'directory.xml');
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})-contacts\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Digium
+			$set_if_empty($file, '{$mac}-contacts.cfg');
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})-smartblf\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Digium
+			$set_if_empty($file, '{$mac}-smartblf.cfg');
+		} elseif (preg_match('#/provision/.*-([A-Fa-f0-9]{12})\.(?:cfg|htm)?$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Snom
+		} elseif (preg_match('#/provision/C520-WiMi_([A-Fa-f0-9]{12})\.cfg$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Snom
+		} elseif (preg_match('#/provision/([A-Fa-f0-9]{12})/directory\.xml$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Snom
+			$set_if_empty($file, 'directory.xml');
+		} elseif (preg_match('#/provision/m3/settings/([A-Fa-f0-9]{12})(?:\.cfg)?$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // Snom m3 (Apache)
+		} elseif (preg_match('#/provision/kt.*?-([A-Fa-f0-9]{12})\.xml$#i', $path, $match)) {
+			$set_if_empty($address, $match[1]);              // KT (Apache)
+		} elseif (preg_match('#([A-Fa-f0-9]{2}[:-]){5}[A-Fa-f0-9]{2}$#i', $path, $match)) {
+			$set_if_empty($address, $match[0]);              // Cisco colon-MAC (Apache)
+		}
+
+		return [
+			'address' => $address,
+			'file'    => $file,
+			'ext'     => $ext,
+		];
+	}
 
 	/**
 	 * Checks if a device exists in the database.
@@ -853,10 +968,6 @@ class provision {
 						if ($row['device_key_vendor'] == 'polycom' && $row['device_key_type'] == 'line') {
 							$device_lines[$device_key_line]['line_keys'] = $row['device_key_value'];
 						}
-
-						// kept temporarily for backwards compatibility to allow custom templates to be updated
-						$device_keys[$id] = $row;
-						$device_keys[$id]['device_key_owner'] = 'profile';
 					}
 				}
 				unset($sql, $parameters, $keys);
@@ -903,42 +1014,46 @@ class provision {
 					// build the device keys array
 					$device_keys[$category][$id] = $row;
 					$device_keys[$category][$id]['device_key_owner'] = 'device';
-
-					// kept temporarily for backwards comptability to allow custom templates to be updated
-					$device_keys[$id] = $row;
-					$device_keys[$id]['device_key_owner'] = 'device';
 				}
 			}
 			unset($sql, $parameters, $keys);
 
-			// replace the ${caller_id_name} with the extensions caller id name
+			// replace the ${caller_id_name}, ${extension}, and ${user} with the extensions caller id name
 			if (is_array($device_keys)) {
-				foreach ($device_keys as $row) {
-					// set the variables
-					$id = $row['device_key_id'];
-					$category = $row['device_key_category'];
+				foreach ($device_keys as $key_category) {
+					foreach ($key_category as $row) {
+						// set the variables
+						$id = $row['device_key_id'];
+						$category = $row['device_key_category'];
 
-					// build the device keys array
-					if (in_array($device_key_vendor, ['cisco', 'spa']) && $row['device_key_type'] == 'disabled') {
-						$device_key_array = explode(';', $row['device_key_value']);
-						foreach ($device_key_array as $sub_row) {
-							[$key, $value] = explode('=', $sub_row);
-							if ($key == 'sub') {
-								$extension = explode('@', $value)[0];  // remove the @PROXY
-								$caller_id_name = $extension_labels[$extension]['caller_id_name'];
-								$device_key_label = str_replace('${caller_id_name}', $caller_id_name, $row['device_key_label']);
-								$device_key_label = str_replace('${extension}', $extension, $device_key_label);
-								$device_key_label = str_replace('${user}', $extension, $device_key_label);
-								$device_keys[$category][$id]['device_key_label'] = $device_key_label;
+						// build the device keys array
+						if (in_array($device_key_vendor, ['cisco', 'spa']) && $row['device_key_type'] == 'disabled') {
+							$device_key_array = explode(';', $row['device_key_value']);
+							foreach ($device_key_array as $sub_row) {
+								[$key, $value] = explode('=', $sub_row);
+								if ($key == 'sub') {
+									$extension = explode('@', $value)[0];  // remove the @PROXY
+									$caller_id_name = $extension_labels[$extension]['caller_id_name'];
+									$device_key_label = str_replace('${caller_id_name}', $caller_id_name, $row['device_key_label']);
+									$device_key_label = str_replace('${extension}', $extension, $device_key_label);
+									$device_key_label = str_replace('${user}', $extension, $device_key_label);
+									$device_keys[$category][$id]['device_key_label'] = $device_key_label;
+								}
 							}
+						} elseif (is_numeric($row['device_key_value'])) {
+							$extension = $row['device_key_value'];
+							$caller_id_name = $extension_labels[$row['device_key_value']]['caller_id_name'];
+							$device_key_label = str_replace('${caller_id_name}', $caller_id_name, $row['device_key_label']);
+							$device_key_label = str_replace('${extension}', $extension, $device_key_label);
+							$device_key_label = str_replace('${user}', $extension, $device_key_label);
+							$device_keys[$category][$id]['device_key_label'] = $device_key_label;
 						}
-					} elseif (is_numeric($row['device_key_value'])) {
-						$extension = $row['device_key_value'];
-						$caller_id_name = $extension_labels[$row['device_key_value']]['caller_id_name'];
-						$device_key_label = str_replace('${caller_id_name}', $caller_id_name, $row['device_key_label']);
-						$device_key_label = str_replace('${extension}', $extension, $device_key_label);
-						$device_key_label = str_replace('${user}', $extension, $device_key_label);
-						$device_keys[$category][$id]['device_key_label'] = $device_key_label;
+						else {
+							$device_key_label = str_replace('${caller_id_name}', '', $row['device_key_label']);
+							$device_key_label = str_replace('${extension}', '', $device_key_label);
+							$device_key_label = str_replace('${user}', '', $device_key_label);
+							$device_keys[$category][$id]['device_key_label'] = $device_key_label;
+						}
 					}
 				}
 			}
@@ -1493,7 +1608,7 @@ class provision {
 	 *
 	 * @return void
 	 */
-	function write() {
+	public function write() {
 		// build the provision array
 		$provision = $this->settings->get('provision', null, []);
 		foreach ($provision as $key => $val) {
@@ -1521,9 +1636,11 @@ class provision {
 
 		// get the devices from database
 		$sql = 'select * from v_devices ';
-		// $sql .= "where domain_uuid = :domain_uuid ";
-		// $parameters['domain_uuid'] = $this->domain_uuid;
-		$result = $this->database->select($sql, null, 'all');
+		$sql .= "where domain_uuid = :domain_uuid ";
+		$sql .= "and device_uuid = :device_uuid ";
+		$parameters['domain_uuid'] = $this->domain_uuid;
+		$parameters['device_uuid'] = $this->device_uuid;
+		$result = $this->database->select($sql, $parameters, 'all');
 
 		// process each device
 		if (is_array($result)) {
@@ -1595,6 +1712,12 @@ class provision {
 						$file_name = str_replace('{$mac}', $address_formatted, $file_name);
 						$file_name = str_replace('{$address}', $address_formatted, $file_name);
 
+						//prevent path traversal in the file name
+						$file_name = basename($file_name);
+						if ($file_name === '' || $file_name === '.' || $file_name === '..') {
+							continue;
+						}
+
 						// render and write configuration to file
 						$provision_dir_array = explode(';', $provision['path']);
 						if (is_array($provision_dir_array)) {
@@ -1608,11 +1731,15 @@ class provision {
 
 									// write the file
 									if (!is_dir($directory)) {
-										mkdir($directory, 0777, true);
+										mkdir($directory, 0750, true);
 									}
-									$fh = fopen($dest_path, 'w') or die("Unable to write to $directory for provisioning. Make sure the path exists and permissons are set correctly.");
-									fwrite($fh, $file_contents);
-									fclose($fh);
+									$fh = @fopen($dest_path, 'w');
+									if (!$fh) {
+										syslog(LOG_WARNING, 'provision: unable to write to ' . $dest_path . '. Make sure the path exists and permissions are set correctly.');
+									} else {
+										fwrite($fh, $file_contents);
+										fclose($fh);
+									}
 								} else {  // device disabled
 									// remove only files with `{$mac}` name
 									if (strpos($template_path, '{$mac}') !== false) {

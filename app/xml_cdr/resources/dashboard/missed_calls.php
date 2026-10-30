@@ -68,6 +68,7 @@
 			$x = 0;
 			foreach ($assigned_extensions as $assigned_extension_uuid => $assigned_extension) {
 				$sql_where_array[] = "extension_uuid = :assigned_extension_uuid_".$x;
+				//$sql_where_array[] = "exists (select 1 from v_xml_cdr_extensions as xe where xe.xml_cdr_uuid = v_xml_cdr.xml_cdr_uuid and xe.extension_uuid = :assigned_extension_uuid_". $x . ")";
 				$sql_where_array[] = "destination_number = :destination_number_".$x;
 				$parameters['assigned_extension_uuid_'.$x] = $assigned_extension_uuid;
 				$parameters['destination_number_'.$x] = $assigned_extension;
@@ -109,7 +110,7 @@
 		<div class='hud_chart'><canvas id='missed_calls_chart'></canvas></div>
 
 		<script>
-			const missed_calls_chart = new Chart(
+			window.missed_calls_chart = new Chart(
 				document.getElementById('missed_calls_chart').getContext('2d'),
 				{
 					type: 'doughnut',
@@ -145,6 +146,9 @@
 					}]
 				}
 			);
+			if (window.missed_calls_chart.tooltip) {
+				window.missed_calls_chart.tooltip._chart = window.missed_calls_chart;
+			}
 		</script>
 		<?php
 	}
@@ -184,7 +188,7 @@
 
 			foreach ($result as $index => $row) {
 				$start_date_time = str_replace('/0','/', ltrim($row['start_date_time'], '0'));
-				if (!empty($_SESSION['domain']['time_format']) && $settings->get('domain', 'time_format') == '12h') {
+				if ($settings->get('domain', 'time_format', '12h') == '12h') {
 					$start_date_time = str_replace(' 0',' ', $start_date_time);
 				}
 				//set click-to-call variables

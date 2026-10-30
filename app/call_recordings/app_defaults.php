@@ -2,14 +2,24 @@
 
 if ($domains_processed == 1) {
 
-	//build the array
+	// Prompt to Install Zip
+	if (PHP_SAPI === 'cli') {
+		$ffmpeg_path = shell_exec('which zip');
+		if (empty($ffmpeg_path)) {
+			echo "Please install zip\n";
+			echo "On Debian / Ubuntu Linux, install zip with this command.\n";
+			echo "apt install zip\n";
+		}
+	}
+
+	// Load the email template
 	$x = 0;
 	$array['email_templates'][$x]['email_template_uuid'] = 'e591db34-0f35-47a5-aaa0-23e7285a0d7e';
 	$array['email_templates'][$x]['template_language'] = 'en-us';
 	$array['email_templates'][$x]['template_category'] = 'call_recordings';
 	$array['email_templates'][$x]['template_subcategory'] = 'transcription';
 	$array['email_templates'][$x]['template_subject'] = "Caller ID \${caller_id_name} <\${caller_id_number}> \${duration}";
-	$array['email_templates'][$x]['template_body'] .= "<html>\n";
+	$array['email_templates'][$x]['template_body'] = "<html>\n";
 	$array['email_templates'][$x]['template_body'] .= "	<head>\n";
 	$array['email_templates'][$x]['template_body'] .= "	 <style>\n";
 	$array['email_templates'][$x]['template_body'] .= "	 	.message-bubble {\n";
@@ -42,14 +52,15 @@ if ($domains_processed == 1) {
 	$array['email_templates'][$x]['template_body'] .= "	<body>\n";
 	$array['email_templates'][$x]['template_body'] .= "	Caller ID \${caller_id_name} <a href=\"tel:\${caller_id_number}\">\${caller_id_number}</a><br />\n";
 	$array['email_templates'][$x]['template_body'] .= "	<br />\n";
-	$array['email_templates'][$x]['template_body'] .= "		Date \${start_date}<br />\n";
+    $array['email_templates'][$x]['template_body'] .= "        Dialed Number <a href=\"tel:\${caller_destination}\">\${caller_destination}</a><br />\n";	
+    $array['email_templates'][$x]['template_body'] .= "		Date \${start_date}<br />\n";
 	$array['email_templates'][$x]['template_body'] .= "		Time \${start_time} \${end_time}<br />\n";
 	$array['email_templates'][$x]['template_body'] .= "		Length \${duration}<br />\n";
 	$array['email_templates'][$x]['template_body'] .= "	<br />\n";
 	$array['email_templates'][$x]['template_body'] .= "		\${summary}\n";
 	$array['email_templates'][$x]['template_body'] .= "	<br />\n";
 	$array['email_templates'][$x]['template_body'] .= "	<br />\n";
-	$array['email_templates'][$x]['template_body'] .= "		<strong>Conversation Transcription<strong><br />\n";
+	$array['email_templates'][$x]['template_body'] .= "		<strong>Conversation Transcription</strong><br />\n";
 	$array['email_templates'][$x]['template_body'] .= "		\${transcript}\n";
 	$array['email_templates'][$x]['template_body'] .= "	<br />\n";
 	$array['email_templates'][$x]['template_body'] .= "	<br />\n";

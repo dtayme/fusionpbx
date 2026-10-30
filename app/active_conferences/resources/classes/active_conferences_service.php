@@ -225,7 +225,7 @@ class active_conferences_service extends base_websocket_system_service implement
 	 *
 	 * @return void
 	 */
-	protected function reload_settings(): void {
+	public function reload_settings(): void {
 		// Re-read the config file to get any possible changes
 		parent::$config->read();
 
@@ -531,6 +531,31 @@ class active_conferences_service extends base_websocket_system_service implement
 		if (empty($conference_name) || strpos($conference_name, '@') === false) {
 			$this->warning("Invalid conference name: $conference_name");
 			$this->send_action_response($message, false, 'Invalid conference name');
+			return;
+		}
+
+		//
+		// All values below are interpolated into FreeSWITCH event socket
+		// commands in execute_conference_action(). A crafted client could
+		// otherwise inject extra command variables or commands using the
+		// structural characters of those command strings ( { } & ; ( ) @ /
+		// quotes and whitespace, including newlines which the line based
+		// event socket treats as a new command ). Each value is checked
+		// against an allowlist of only the characters it legitimately
+		// needs. Bail out if any value is invalid.
+		//
+		$valid =
+			// conference name: name@domain
+			preg_match('/^[0-9A-Za-z._@-]+$/', $conference_name)
+			// conference member id
+			&& ($member_id === '' || preg_match('/^[0-9A-Za-z._-]+$/', $member_id))
+			// unique id: valid uuid (36 char dashed or 32 char hex)
+			&& ($uuid === '' || is_uuid($uuid))
+			// volume / energy direction
+			&& ($direction === '' || $direction === 'up' || $direction === 'down');
+		if (!$valid) {
+			$this->warning("Action rejected because of an invalid payload");
+			$this->send_action_response($message, false, 'Invalid action payload');
 			return;
 		}
 

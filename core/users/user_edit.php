@@ -49,6 +49,156 @@
 		$action = 'add';
 	}
 
+//process passkey deletion (admin management: view + rename + delete)
+//passkey registration cannot be done on a user's behalf (webauthn requires the
+//user's own authenticator), so the admin can only view, rename and delete existing ones
+if (permission_exists('user_edit') && $action == 'edit'
+	&& !empty($_POST['passkey_delete_uuid']) && is_uuid($_POST['passkey_delete_uuid'])
+	&& in_array('passkey', $settings->get('authentication', 'methods', []))) {
+
+	//validate the token
+	$token = new token;
+	if (!$token->validate($_SERVER['PHP_SELF'])) {
+		message::add($text['message-invalid_token'], 'negative');
+		header("Location: user_edit.php?id=" . urlencode($user_uuid));
+		exit;
+	}
+
+	//only allow deleting a passkey that belongs to this user
+	$sql = "select count(*) as count \n";
+	$sql .= "from v_user_passkeys \n";
+	$sql .= "where user_passkey_uuid = :user_passkey_uuid \n";
+	$sql .= "and user_uuid = :user_uuid \n";
+	$parameters['user_passkey_uuid'] = $_POST['passkey_delete_uuid'];
+	$parameters['user_uuid'] = $user_uuid;
+	$count = $database->select($sql, $parameters, 'column');
+	unset($sql, $parameters);
+
+	if (!empty($count) && $count > 0) {
+		//add the user_passkey_delete permission
+		$p = permissions::new();
+		$p->add("user_passkey_delete", "temp");
+
+		$sql = "delete from v_user_passkeys \n";
+		$sql .= "where user_passkey_uuid = :user_passkey_uuid \n";
+		$sql .= "and user_uuid = :user_uuid \n";
+		$parameters['user_passkey_uuid'] = $_POST['passkey_delete_uuid'];
+		$parameters['user_uuid'] = $user_uuid;
+		$database->execute($sql, $parameters);
+		unset($sql, $parameters);
+
+		//remove the temporary permission
+		$p->delete("user_passkey_delete", "temp");
+
+		message::add($text['message-passkey_deleted'], 'positive');
+	}
+	else {
+		message::add($text['message-passkey_delete_failed'], 'negative');
+	}
+
+	header("Location: user_edit.php?id=" . urlencode($user_uuid));
+	exit;
+}
+
+	//process passkey rename (admin management: change the name of a registered passkey)
+	if (permission_exists('user_edit') && $action == 'edit'
+		&& !empty($_POST['passkey_rename_uuid']) && is_uuid($_POST['passkey_rename_uuid'])
+		&& in_array('passkey', $settings->get('authentication', 'methods', []))) {
+
+	//validate the token
+		$token = new token;
+		if (!$token->validate($_SERVER['PHP_SELF'])) {
+			message::add($text['message-invalid_token'], 'negative');
+			header("Location: user_edit.php?id=" . urlencode($user_uuid));
+			exit;
+		}
+
+	//passkey rename
+		$rename_name = trim($_POST['passkey_rename_name'] ?? '');
+		if ($rename_name === '' || (function_exists('mb_strlen') ? mb_strlen($rename_name) : strlen($rename_name)) > 100) {
+			message::add($text['message-passkey_rename_failed'], 'negative');
+		}
+		else {
+			//only allow renaming a passkey that belongs to this user
+			$sql = "select count(*) as count \n";
+			$sql .= "from v_user_passkeys \n";
+			$sql .= "where user_passkey_uuid = :user_passkey_uuid \n";
+			$sql .= "and user_uuid = :user_uuid \n";
+			$parameters['user_passkey_uuid'] = $_POST['passkey_rename_uuid'];
+			$parameters['user_uuid'] = $user_uuid;
+			$count = $database->select($sql, $parameters, 'column');
+			unset($sql, $parameters);
+
+			if (!empty($count) && $count > 0) {
+				//add the user_passkey_edit permission
+				$p = permissions::new();
+				$p->add("user_passkey_edit", "temp");
+
+				$sql = "update v_user_passkeys \n";
+				$sql .= "set display_name = :display_name \n";
+				$sql .= "where user_passkey_uuid = :user_passkey_uuid \n";
+				$sql .= "and user_uuid = :user_uuid \n";
+				$parameters['display_name'] = $rename_name;
+				$parameters['user_passkey_uuid'] = $_POST['passkey_rename_uuid'];
+				$parameters['user_uuid'] = $user_uuid;
+				$database->execute($sql, $parameters);
+				unset($sql, $parameters);
+
+				//remove the temporary permission
+				$p->delete("user_passkey_edit", "temp");
+
+				message::add($text['message-passkey_renamed'], 'positive');
+			}
+			else {
+				message::add($text['message-passkey_rename_failed'], 'negative');
+			}
+		}
+
+		header("Location: user_edit.php?id=" . urlencode($user_uuid));
+		exit;
+	}
+
+// Check if the user has totp
+	// $user_has_totp_secret = false;
+	// $sql = "select user_setting_value from v_user_settings s ";
+	// $sql .= "left join v_users u on u.user_uuid = s.user_uuid ";
+	// $sql .= "where s.user_uuid = :user_uuid ";
+	// $sql .= "and s.user_setting_category = 'authentication' ";
+	// $sql .= "and s.user_setting_subcategory = 'methods' ";
+	// $sql .= "and s.user_setting_value = 'totp' ";
+	// $sql .= "and u.domain_uuid = :domain_uuid ";
+	// $sql .= "and u.user_totp_secret is not null ";
+	// $parameters['user_uuid'] = $_REQUEST["id"] ?? '';
+	// $parameters['domain_uuid'] = $_SESSION['domain_uuid'];
+	// $user_has_totp_secret = !empty($database->select($sql, $parameters, 'column'));
+	// unset($sql, $parameters);
+
+// Set variables from http GET parameters
+	$page = is_numeric($_GET['page'] ?? '') ? $_GET['page'] : 0;
+	$order_by = preg_replace('#[^a-zA-Z0-9_\-]#', '', $_GET['order_by'] ?? '');
+	$order = ($_GET['order'] ?? '') === 'desc' ? 'desc' : 'asc';
+	$search = $_GET['search'] ?? '';
+	$show = $_GET['show'] ?? '';
+
+// Build the query string
+	$url_params = [];
+	if (!empty($page)) {
+		$url_params['page'] = $page;
+	}
+	if (!empty($_GET['order_by'])) {
+		$url_params['order_by'] = $order_by;
+	}
+	if (!empty($_GET['order'])) {
+		$url_params['order'] = $order;
+	}
+	if (!empty($search)) {
+		$url_params['search'] = $search;
+	}
+	if (!empty($show) && $show == 'all' && permission_exists('user_all')) {
+		$url_params['show'] = $show;
+	}
+	$query_string = http_build_query($url_params);
+
 //get total user count from the database, check limit, if defined
 	if (permission_exists('user_add') && $action == 'add' && $settings->get('limit', 'users') != '') {
 		$sql = "select count(*) ";
@@ -60,7 +210,7 @@
 
 		if ($num_rows >= $settings->get('limit', 'users')) {
 			message::add($text['message-maximum_users'].' '.$settings->get('limit', 'users'), 'negative');
-			header('Location: users.php');
+			header('Location: users.php'.($query_string ? '?'.$query_string : ''));
 			exit;
 		}
 	}
@@ -85,7 +235,7 @@
 			$token = new token;
 			if (!$token->validate($_SERVER['PHP_SELF'])) {
 				message::add($text['message-invalid_token'],'negative');
-				header("Location: users.php");
+				header("Location: users.php".($query_string ? '?'.$query_string : ''));
 				exit;
 			}
 
@@ -97,7 +247,7 @@
 
 		//redirect the user
 			message::add($text['message-delete']);
-			header("Location: user_edit.php?id=".urlencode($user_uuid));
+			header("Location: user_edit.php?id=".urlencode($user_uuid).($query_string ? '&'.$query_string : ''));
 			exit;
 	}
 
@@ -126,6 +276,7 @@
 			$user_status = $_POST["user_status"] ?? '';
 			$user_language = $_POST["user_language"];
 			$user_time_zone = $_POST["user_time_zone"];
+			$user_theme = $_POST["user_theme"];
 
 			if (permission_exists('contact_edit') && $action == 'edit') {
 				$contact_uuid = $_POST["contact_uuid"];
@@ -144,15 +295,21 @@
 			if (permission_exists('message_key')) {
 				$message_key = $_POST["message_key"];
 			}
-			if (!empty($_SESSION['authentication']['methods']) && in_array('totp', $_SESSION['authentication']['methods'])) {
+			if (in_array('totp', $settings->get('authentication', 'methods', []))) {
 				$user_totp_secret = strtoupper($_POST["user_totp_secret"]);
 			}
+			// if (!empty($_REQUEST["id"])) {
+			// 	// If they have it on and the reset button was pressed, then clear the TOTP secret so it can be reconfigured on next login
+			// 	if ($user_has_totp_secret && permission_exists('user_totp_reset') && ($_POST['reset_totp'] ?? '') != 'false') {
+			// 		$user_totp_secret = null;
+			// 	}
+			// }
 
 		//validate the token
 			$token = new token;
 			if (!$token->validate($_SERVER['PHP_SELF'])) {
 				message::add($text['message-invalid_token'],'negative');
-				header('Location: users.php');
+				header('Location: users.php'.($query_string ? '?'.$query_string : ''));
 				exit;
 			}
 
@@ -261,7 +418,7 @@
 			if (message::count() != 0 || !empty($invalid)) {
 				if ($invalid) { message::add($text['message-required'].implode(', ', $invalid), 'negative', 7500); }
 				persistent_form_values('store', $_POST);
-				header("Location: user_edit.php".(permission_exists('user_edit') && $action != 'add' ? "?id=".urlencode($user_uuid) : null));
+				header("Location: user_edit.php".(permission_exists('user_edit') && $action != 'add' ? "?id=".urlencode($user_uuid) : null).($query_string ? '&'.$query_string : ''));
 				exit;
 			}
 			else {
@@ -367,6 +524,56 @@
 			}
 			unset($sql, $parameters, $row);
 
+		//check to see if user theme is set
+			$sql = "select user_setting_uuid, user_setting_value from v_user_settings ";
+			$sql .= "where user_setting_category = 'domain' ";
+			$sql .= "and user_setting_subcategory = 'theme' ";
+			$sql .= "and user_uuid = :user_uuid ";
+			$parameters['user_uuid'] = $user_uuid;
+			$row = $database->select($sql, $parameters, 'row');
+			if (!empty($user_theme) && (empty($row) || (!empty($row['user_setting_uuid']) && !is_uuid($row['user_setting_uuid'])))) {
+				//add user setting to array for insert
+				$array['user_settings'][$i]['user_setting_uuid'] = uuid();
+				$array['user_settings'][$i]['user_uuid'] = $user_uuid;
+				$array['user_settings'][$i]['domain_uuid'] = $domain_uuid;
+				$array['user_settings'][$i]['user_setting_category'] = 'domain';
+				$array['user_settings'][$i]['user_setting_subcategory'] = 'theme';
+				$array['user_settings'][$i]['user_setting_name'] = 'uuid';
+				$array['user_settings'][$i]['user_setting_value'] = $user_theme;
+				$array['user_settings'][$i]['user_setting_enabled'] = 'true';
+				$array['user_settings'][$i]['user_setting_description'] = '';
+				$i++;
+			}
+			else {
+				if (!empty($row['user_setting_uuid']) && (empty($row['user_setting_value']) || empty($user_theme))) {
+					$array_delete['user_settings'][0]['user_setting_category'] = 'domain';
+					$array_delete['user_settings'][0]['user_setting_subcategory'] = 'theme';
+					$array_delete['user_settings'][0]['user_uuid'] = $user_uuid;
+
+					$p = permissions::new();
+					$p->add('user_setting_delete', 'temp');
+
+					$database->delete($array_delete);
+					unset($array_delete);
+
+					$p->delete('user_setting_delete', 'temp');
+				}
+				if (!empty($user_theme)) {
+					//add user setting to array for update
+					$array['user_settings'][$i]['domain_uuid'] = $domain_uuid;
+					$array['user_settings'][$i]['user_uuid'] = $user_uuid;
+					$array['user_settings'][$i]['user_setting_uuid'] = $row['user_setting_uuid'];
+					$array['user_settings'][$i]['user_setting_category'] = 'domain';
+					$array['user_settings'][$i]['user_setting_subcategory'] = 'theme';
+					$array['user_settings'][$i]['user_setting_name'] = 'uuid';
+					$array['user_settings'][$i]['user_setting_value'] = $user_theme;
+					$array['user_settings'][$i]['user_setting_enabled'] = 'true';
+					$array['user_settings'][$i]['user_setting_description'] = $row['user_setting_description'] ?? '';
+					$i++;
+				}
+			}
+			unset($sql, $parameters, $row);
+
 		//check to see if message key is set
 			if (permission_exists('message_key')) {
 				$sql = "select user_setting_uuid, user_setting_value from v_user_settings ";
@@ -430,7 +637,10 @@
 				$parameters['domain_uuid'] = $_SESSION['domain_uuid'];
 				$parameters['group_uuid'] = $group_uuid;
 				$row = $database->select($sql, $parameters, 'row');
-				if ($row['group_level'] <= $_SESSION['user']['group_level']) {
+				//delegation rule: groups in a lower level are open (hierarchy), but a group at your own level
+				//may only be assigned if you are a member of it (you can only give out groups you are part of)
+				$my_group_uuids = array_column($_SESSION['user']['groups'] ?? [], 'group_uuid');
+				if ($row['group_level'] < $_SESSION['user']['group_level'] || in_array($group_uuid, $my_group_uuids)) {
 					$array['user_groups'][$n]['user_group_uuid'] = uuid();
 					$array['user_groups'][$n]['domain_uuid'] = $domain_uuid;
 					$array['user_groups'][$n]['group_name'] = $group_name;
@@ -527,10 +737,77 @@
 						unlink(session_save_path() . "/sess_" . $row['session_id']);
 					}
 				}
+				unset($sql, $parameters);
 
 				//create a one way hash for the user password
 				$array['users'][$x]['password'] = password_hash($password, PASSWORD_DEFAULT, $options);
 				$array['users'][$x]['salt'] = null;
+
+				//delete remember me tokens
+				remember_me::delete_user_tokens($user_uuid);
+
+				// Unset remember me cookie
+				if ($user_uuid == $_SESSION['user_uuid']) {
+					remember_me::clear_cookie();
+				}
+
+				//send the password changed email
+				if (valid_email($user_email)) {
+					//generate email and body variables
+					$domain_name = $_SESSION['domain_name'];
+					$domain_uuid = $_SESSION['domain_uuid'];
+
+					//get user language code, if exists
+					$sql = "select user_setting_value from v_user_settings ";
+					$sql .= "where user_uuid = :user_uuid ";
+					$sql .= "and domain_uuid = :domain_uuid ";
+					$sql .= "and user_setting_category = 'domain' ";
+					$sql .= "and user_setting_subcategory = 'language' ";
+					$sql .= "and user_setting_name = 'code' ";
+					$parameters['user_uuid'] = $user_uuid;
+					$parameters['domain_uuid'] = $domain_uuid;
+					$row = $database->select($sql, $parameters, 'row');
+					if (is_array($row) && @sizeof($row) != 0) {
+						$user_language_code = $row['user_setting_value'];
+					}
+					unset($sql, $parameters, $row);
+
+					//get the email template from database
+					$sql = "select template_subject, template_body from v_email_templates ";
+					$sql .= "where template_language = :template_language ";
+					$sql .= "and (domain_uuid = :domain_uuid or domain_uuid is null) ";
+					$sql .= "and template_category = 'password_changed' ";
+					$sql .= "and template_subcategory = 'default' ";
+					$sql .= "and template_type = 'html' ";
+					$sql .= "and template_enabled = true ";
+					$parameters['template_language'] = $user_language_code ? $user_language_code : $settings->get('domain', 'language', 'en-us');
+					$parameters['domain_uuid'] = $domain_uuid;
+					$row = $database->select($sql, $parameters, 'row');
+					if (is_array($row)) {
+						$email_subject = $row['template_subject'];
+						$email_body = $row['template_body'];
+					}
+					unset($sql, $parameters, $row);
+
+					//send email if the subject and body are not empty
+					if (!empty($email_subject) && !empty($email_body)) {
+						//replace variables in email body
+						$email_body = str_replace('${domain}', $domain_name, $email_body);
+
+						//send the email
+						send_email($user_email, $email_subject, $email_body, $eml_error);
+					}
+
+					//build the user log array
+					$log_array['type'] = 'Password Changed';
+					$log_array['domain_uuid'] = $_SESSION['domain_uuid'];
+					$log_array['username'] = $username;
+					$log_array['user_uuid'] = $user_uuid;
+					$log_array['authorized'] = true;
+
+					//add the result to the user logs
+					user_logs::add($log_array);
+				}
 			}
 			$array['users'][$x]['user_email'] = $user_email;
 			$array['users'][$x]['user_status'] = $user_status;
@@ -538,7 +815,7 @@
 				if (permission_exists('api_key')) {
 					$array['users'][$x]['api_key'] = (!empty($api_key)) ? $api_key : null;
 				}
-				if (!empty($_SESSION['authentication']['methods']) && in_array('totp', $_SESSION['authentication']['methods'])) {
+				if (in_array('totp', $settings->get('authentication', 'methods', []))) { // || $user_has_totp_secret) {
 					$array['users'][$x]['user_totp_secret'] = $user_totp_secret;
 				}
 				$array['users'][$x]['user_type'] = $user_type;
@@ -610,7 +887,7 @@
 			else {
 				message::add($text['message-add'],'positive');
 			}
-			header("Location: user_edit.php?id=".urlencode($user_uuid));
+			header("Location: user_edit.php?id=".urlencode($user_uuid).($query_string ? '&'.$query_string : ''));
 			exit;
 	}
 
@@ -650,7 +927,7 @@
 				}
 				else {
 					message::add($text['message-invalid_user'], 'negative', 7500);
-					header("Location: user_edit.php?id=".$_SESSION['user_uuid']);
+					header("Location: user_edit.php?id=".$_SESSION['user_uuid'].($query_string ? '&'.$query_string : ''));
 					exit;
 				}
 				unset($sql, $parameters, $row);
@@ -677,6 +954,10 @@
 				}
 				unset($sql, $parameters, $result, $row);
 			}
+
+		//get themes from database
+			$sql = "select theme_uuid, theme_category, theme_name from v_themes where theme_enabled = true order by theme_category asc ";
+			$themes = $database->select($sql, null, 'all');
 	}
 
 //set the defaults
@@ -727,6 +1008,8 @@
 	}
 
 	echo "<form name='frm' id='frm' method='post'>\n";
+	echo "<input type='hidden' name='search' id='search' value=\"".($search ?? '')."\" />\n";
+	//echo "<input type='hidden' name='reset_totp' id='reset_totp' value='false' />\n";
 
 	echo "<div class='action_bar' id='action_bar'>\n";
 	echo "	<div class='heading'><b>".$text['header-user_edit']."</b></div>\n";
@@ -735,7 +1018,7 @@
 		echo "<div class='unsaved'>".$text['message-unsaved_changes']." <i class='fas fa-exclamation-triangle'></i></div>";
 	}
 	if (permission_exists('user_add') || permission_exists('user_edit')) {
-		echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back'),'id'=>'btn_back','link'=>'users.php']);
+		echo button::create(['type'=>'button','label'=>$text['button-back'],'icon'=>$settings->get('theme', 'button_icon_back'),'id'=>'btn_back','link'=>'users.php'.($query_string ? '?'.$query_string : '')]);
 	}
 	$button_margin = 'margin-left: 15px;';
 	if (permission_exists('ticket_add') || permission_exists('ticket_edit')) {
@@ -860,7 +1143,7 @@
 	echo "		".$text['label-time_zone']."\n";
 	echo "	</td>\n";
 	echo "	<td class=\"vtable\" align='left'>\n";
-	echo "		<select id='user_time_zone' name='user_time_zone' class='formfld' style=''>\n";
+	echo "		<select id='user_time_zone' name='user_time_zone' class='formfld searchable_select' style=''>\n";
 	echo "		<option value=''></option>\n";
 	//$list = DateTimeZone::listAbbreviations();
 	$time_zone_identifiers = DateTimeZone::listIdentifiers();
@@ -885,6 +1168,38 @@
 	echo "		".$text['description-time_zone']."<br />\n";
 	echo "	</td>\n";
 	echo "	</tr>\n";
+
+	if (permission_exists('theme_view')) {
+		echo "	<tr>\n";
+		echo "	<td width='20%' class=\"vncell\" valign='top'>\n";
+		echo "		".$text['label-theme']."\n";
+		echo "	</td>\n";
+		echo "	<td class=\"vtable\" align='left'>\n";
+		echo "		<select class='formfld' id='user_theme' name='user_theme'>\n";
+		echo "			<option value=''></option>\n";
+		$theme_categories = [];
+		foreach ($themes as $theme) {
+			if (!empty($theme['theme_category']) && !in_array($theme['theme_category'], $theme_categories)) {
+				$theme_categories[] = $theme['theme_category'];
+			} elseif (empty($theme['theme_category'])) {
+				echo "			<option value='".escape($theme['theme_uuid'])."' ".($user_settings['domain']['theme']['uuid'] == $theme['theme_uuid'] ? "selected" : null).">".escape($theme['theme_name'])."</option>\n";
+			}
+		}
+		foreach ($theme_categories as $category) {
+			echo "		<optgroup label='".escape($category)."'>\n";
+			foreach ($themes as $theme) {
+				if (!empty($theme['theme_category']) && $theme['theme_category'] == $category) {
+					echo "			<option value='".escape($theme['theme_uuid'])."' ".($user_settings['domain']['theme']['uuid'] == $theme['theme_uuid'] ? "selected" : null).">".escape($theme['theme_name'])."</option>\n";
+				}
+			}
+			echo "		</optgroup>\n";
+		}
+		echo "		</select>\n";
+		echo "		<br />\n";
+		echo "		".$text['description-theme']."<br />\n";
+		echo "	</td>\n";
+		echo "	</tr>\n";
+	}
 
 	if (permission_exists("user_status")) {
 		echo "	<tr>\n";
@@ -1042,8 +1357,11 @@
 			if (isset($assigned_groups)) { echo "<br />\n"; }
 			echo "<select name='group_uuid_name' class='formfld' style='width: auto; margin-right: 3px;' ".($action == 'add' ? "required='required'" : null).">\n";
 			echo "	<option value=''></option>\n";
+			//delegation rule: lower levels are open (hierarchy), but a group at your own level is only
+			//offered if you are a member of it (you can only give out groups you are part of)
+			$my_group_uuids = array_column($_SESSION['user']['groups'] ?? [], 'group_uuid');
 			foreach($groups as $field) {
-				if ($field['group_level'] <= $_SESSION['user']['group_level']) {
+				if ($field['group_level'] < $_SESSION['user']['group_level'] || in_array($field['group_uuid'], $my_group_uuids)) {
 					if (!isset($assigned_groups) || (isset($assigned_groups) && !in_array($field["group_uuid"], $assigned_groups))) {
 						if (isset($group_uuid_name) && $group_uuid_name == $field['group_uuid']."|".$field['group_name']) { $selected = "selected='selected'"; } else { $selected = ''; }
 						echo "	<option value='".$field['group_uuid']."|".$field['group_name']."' $selected>".$field['group_name'].((!empty($field['domain_uuid'])) ? "@".$_SESSION['domains'][$field['domain_uuid']]['domain_name'] : null)."</option>\n";
@@ -1141,7 +1459,7 @@
 	}
 
 	//user time based one time password secret
-	if (!empty($_SESSION['authentication']['methods']) && in_array('totp', $_SESSION['authentication']['methods'])) {
+	if (!empty($user_totp_secret) || in_array('totp', $settings->get('authentication', 'methods', []))) {
 		if (!empty($user_totp_secret) && !empty($username)) {
 			$otpauth = "otpauth://totp/".$username."?secret=".$user_totp_secret."&issuer=".$_SESSION['domain_name'];
 
@@ -1219,6 +1537,142 @@
 		echo "</td>\n";
 		echo "</tr>\n";
 	}
+
+	//user passkeys (webauthn) - admin management (view + rename + delete)
+	//registration is not offered here: it must be done by the user in their own
+	//profile using their own authenticator. admins can view, rename and delete.
+	if ($action == 'edit' && ($settings->get('login', 'passkey_enabled', false) || in_array('passkey', $settings->get('authentication', 'methods', [])))) {
+
+		//get this user's passkey credentials
+		$sql = "select user_passkey_uuid, credential_id, display_name, aaguid, insert_date \n";
+		$sql .= "from v_user_passkeys \n";
+		$sql .= "where user_uuid = :user_uuid \n";
+		$sql .= "and passkey_enabled = true \n";
+		$sql .= "order by insert_date \n";
+		$parameters['user_uuid'] = $user_uuid;
+		$passkey_list = $database->select($sql, $parameters, 'all');
+		unset($sql, $parameters);
+
+		echo "<tr>\n";
+		echo "<td class='vncell' valign='top' align='left' nowrap='nowrap'>\n";
+		echo "	".$text['label-user_passkey']."\n";
+		echo "</td>\n";
+		echo "<td class='vtable' align='left' valign='top'>\n";
+
+		//list the registered passkeys
+		if (!empty($passkey_list) && is_array($passkey_list)) {
+			foreach ($passkey_list as $credential) {
+				$passkey_uuid = $credential['user_passkey_uuid'];
+				echo "	<div style='margin-bottom: 5px;'>\n";
+				echo "		<span id='passkey-edit-view-".$passkey_uuid."' style='white-space:nowrap;'>\n";
+				echo "			".escape($credential['display_name'])." (".escape($credential['insert_date']).")\n";
+				echo "		".button::create(['type'=>'button',
+					'label'=>$text['button-passkey_edit'],
+					'icon'=>'edit',
+					'collapse'=>'never',
+					'style'=>'margin-left: 5px;',
+					'onclick'=>"passkey_edit_edit('".$passkey_uuid."');"])."\n";
+				echo "		".button::create(['type'=>'button',
+					'label'=>$text['button-passkey_delete'],
+					'icon'=>'trash',
+					'collapse'=>'never',
+					'style'=>'margin-left: 5px;',
+					'onclick'=>"passkey_edit_delete('".$passkey_uuid."');"])."\n";
+				echo "		</span>\n";
+				echo "		<span id='passkey-edit-edit-".$passkey_uuid."' style='display:none; white-space:nowrap;'>\n";
+				echo "			<input type='text' class='formfld' id='passkey-edit-name-".$passkey_uuid."' value='".escape($credential['display_name'])."' maxlength='100' style='width: 200px;' />\n";
+				echo "		".button::create(['type'=>'button',
+					'label'=>$text['button-passkey_save'],
+					'icon'=>'check',
+					'collapse'=>'never',
+					'style'=>'margin-left: 5px;',
+					'onclick'=>"passkey_edit_rename('".$passkey_uuid."');"])."\n";
+				echo "		".button::create(['type'=>'button',
+					'label'=>$text['button-passkey_cancel'],
+					'icon'=>'xmark',
+					'collapse'=>'never',
+					'style'=>'margin-left: 5px;',
+					'onclick'=>"passkey_edit_cancel('".$passkey_uuid."');"])."\n";
+				echo "		</span>\n";
+				echo "	</div>\n";
+			}
+		}
+		else {
+			//no passkeys registered yet
+			echo "	<div style='margin-bottom: 5px;'>\n";
+			echo "		<span style='display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border:1px dashed #c8c8c8; border-radius:6px; background:#f8f8f8; color:#888; font-size:small; white-space:nowrap;'>\n";
+			echo "			<i class='fa fa-key' aria-hidden='true' style='font-size:14px; color:#b0b0b0;'></i>\n";
+			echo "			".$text['description-user_passkey_none']."\n";
+			echo "		</span>\n";
+			echo "	</div>\n";
+		}
+
+		echo "	<br />".$text['description-user_passkey']."<br />\n";
+
+		//passkey javascript (view + rename + delete)
+		echo "<script>\n";
+		echo "	function passkey_edit_delete(user_passkey_uuid) {\n";
+		echo "		if (!confirm('".$text['message-passkey_delete_confirm']."')) {\n";
+		echo "			return;\n";
+		echo "		}\n";
+		echo "		var form = document.getElementById('frm');\n";
+		echo "		var input = document.createElement('input');\n";
+		echo "		input.type = 'hidden';\n";
+		echo "		input.name = 'passkey_delete_uuid';\n";
+		echo "		input.value = user_passkey_uuid;\n";
+		echo "		form.appendChild(input);\n";
+		echo "		form.submit();\n";
+		echo "	}\n";
+		echo "\n";
+		echo "function passkey_edit_edit(uuid) {\n";
+		echo "	document.getElementById('passkey-edit-view-' + uuid).style.display = 'none';\n";
+		echo "	document.getElementById('passkey-edit-edit-' + uuid).style.display = 'inline';\n";
+		echo "	var name_input = document.getElementById('passkey-edit-name-' + uuid);\n";
+		echo "	if (name_input) { name_input.focus(); name_input.select(); }\n";
+		echo "}\n";
+		echo "\n";
+		echo "function passkey_edit_cancel(uuid) {\n";
+		echo "	document.getElementById('passkey-edit-edit-' + uuid).style.display = 'none';\n";
+		echo "	document.getElementById('passkey-edit-view-' + uuid).style.display = 'inline';\n";
+		echo "}\n";
+		echo "\n";
+		echo "function passkey_edit_rename(uuid) {\n";
+		echo "	var name = document.getElementById('passkey-edit-name-' + uuid).value;\n";
+		echo "	if (name === null || name.trim() === '') { return; }\n";
+		echo "	var form = document.getElementById('frm');\n";
+		echo "	var input = document.createElement('input');\n";
+		echo "	input.type = 'hidden';\n";
+		echo "	input.name = 'passkey_rename_uuid';\n";
+		echo "	input.value = uuid;\n";
+		echo "	form.appendChild(input);\n";
+		echo "	var name_input = document.createElement('input');\n";
+		echo "	name_input.type = 'hidden';\n";
+		echo "	name_input.name = 'passkey_rename_name';\n";
+		echo "	name_input.value = name;\n";
+		echo "	form.appendChild(name_input);\n";
+		echo "	form.submit();\n";
+		echo "}\n";
+		echo "</script>\n";
+
+		echo "</td>\n";
+		echo "</tr>\n";
+	}
+
+	// if ($action == 'edit' && permission_exists('user_totp_reset') && !empty($user_totp_secret)) {
+	// 	echo "	<tr>\n";
+	// 	echo "		<td class='vncell' valign='top'>".$text['label-user_totp_secret']."</td>\n";
+	// 	echo "		<td class='vtable'>\n";
+	// 	echo button::create(['type'=>'button',
+	// 		'label'=>$text['button-reset'],
+	// 		'icon'=>'trash',
+	// 		'style'=>'margin-top: 1px; margin-bottom: 1px;',
+	// 		'onclick'=>"document.getElementById('reset_totp').value = 'true';\n"
+	// 			."document.getElementById('frm').submit();"]);
+	// 	echo "		<br />\n";
+	// 	echo $text['description-user_totp_reset']."\n";
+	// 	echo "		</td>\n";
+	// 	echo "</tr>\n";
+	// }
 
 	echo "<tr ".($user_uuid == $_SESSION['user_uuid'] ? "style='display: none;'" : null).">\n";
 	echo "<td class='vncell' valign='top' align='left' nowrap='nowrap'>\n";

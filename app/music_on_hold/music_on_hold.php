@@ -45,13 +45,21 @@
 
 //get the music_on_hold array
 	$sql = "select * from v_music_on_hold ";
-	$sql .= "where true ";
-	if ($show != "all" || !permission_exists('music_on_hold_all')) {
-		$sql .= "and (domain_uuid = :domain_uuid or domain_uuid is null) ";
-		$parameters['domain_uuid'] = $_SESSION['domain_uuid'];
+	if (!empty($show) && $show == "all" && permission_exists('music_on_hold_all')) {
+		$sql .= "where true ";
 	}
-	if (permission_exists('music_on_hold_domain')) {
-		$sql .= "or domain_uuid is null ";
+	else {
+		$conditions = [];
+		$sql .= "where (";
+		if (permission_exists('music_on_hold_domain')) {
+		$conditions[] = "domain_uuid = :domain_uuid";
+		$parameters['domain_uuid'] = $_SESSION['domain_uuid'];
+		}
+		if (permission_exists('music_on_hold_global')) {
+			$conditions[] = "domain_uuid is null ";
+		}
+		$sql .= implode(" or ", $conditions);
+		$sql .= ")";
 	}
 	$sql .= "order by domain_uuid desc, music_on_hold_name asc, music_on_hold_rate asc";
 	$streams = $database->select($sql, $parameters ?? null, 'all');
@@ -280,14 +288,24 @@
 
 				//check target folder, move uploaded file
 					if (!is_dir($stream_path)) {
-						mkdir($stream_path, 0770, true);
+						if (!@mkdir($stream_path, 0770, true)) {
+							$err = error_get_last();
+							if (stripos($err['message'] ?? '', 'read-only') !== false) {
+								message::add("Failed to create directory: the file system is read-only. Check the systemd ProtectSystem setting for PHP-FPM.", 'negative');
+							}
+							else {
+								message::add("Failed to create directory: ".($err['message'] ?? 'unknown error'), 'negative');
+							}
+							header("Location: music_on_hold.php");
+							exit;
+						}
 
 						// 14.03.22 freeswitch bug - shouldn't be needed with freeswitch 1.10.8
-			                       if (preg_match('|^(/usr/share/freeswitch/sounds/music/(.*?\._loc.*?))/|', $stream_path, $m)) {
-			                           $fs_bug_target = $m[2];
-			                           $fs_bug_link = str_replace('._loc', '.loc', $m[1]);
-			                           symlink($fs_bug_target, $fs_bug_link);
-			                       }
+						if (preg_match('|^(/usr/share/freeswitch/sounds/music/(.*?\._loc.*?))/|', $stream_path, $m)) {
+							$fs_bug_target = $m[2];
+							$fs_bug_link = str_replace('._loc', '.loc', $m[1]);
+							symlink($fs_bug_target, $fs_bug_link);
+						}
 					}
 					if (is_dir($stream_path)) {
 						if (copy($stream_file_name_temp, $stream_path.'/'.$stream_file_name)) {
@@ -302,8 +320,14 @@
 					$cache = new cache;
 					$cache->delete("configuration:local_stream.conf");
 
+				//add the domain name to the stream name
+					if (!empty($domain_uuid)) {
+						$stream_name = $_SESSION['domain_name'].'/'.$stream_name;
+					}
+
+				//reload local stream
 					$music = new switch_music_on_hold;
-					$music->reload();
+					$music->reload($stream_name);
 
 			}
 		//set message for unsupported file type
@@ -326,36 +350,39 @@
 
 //script
 	echo "<script language='JavaScript' type='text/javascript'>\n";
+	echo "\n";
 
 	//file type check
-		echo "	function check_file_type(file_input) {\n";
-		echo "		file_ext = file_input.value.substr((~-file_input.value.lastIndexOf('.') >>> 0) + 2).toLowerCase();\n";
-		echo "		if (file_ext != 'mp3' && file_ext != 'wav' && file_ext != 'ogg' && file_ext != '') {\n";
-		echo "			display_message(\"".$text['message-unsupported_file_type']."\", 'negative', '2750');\n";
-		echo "			document.getElementById('form_upload').reset();\n";
-		echo "		}\n";
-		echo "	}\n";
+	echo "	function check_file_type(file_input) {\n";
+	echo "		file_ext = file_input.value.substr((~-file_input.value.lastIndexOf('.') >>> 0) + 2).toLowerCase();\n";
+	echo "		if (file_ext != 'mp3' && file_ext != 'wav' && file_ext != 'ogg' && file_ext != '') {\n";
+	echo "			display_message(\"".$text['message-unsupported_file_type']."\", 'negative', '2750');\n";
+	echo "			document.getElementById('form_upload').reset();\n";
+	echo "		}\n";
+	echo "	}\n";
+	echo "\n";
 
 	//custom name (category)
-		echo "	function name_mode(mode) {\n";
-		echo "		if (mode == 'new') {\n";
-		echo "			document.getElementById('name_select').style.display='none';\n";
-		echo "			document.getElementById('btn_new').style.display='none';\n";
-		echo "			document.getElementById('name_new').style.display='';\n";
-		echo "			document.getElementById('btn_select').style.display='';\n";
-		echo "			document.getElementById('rate').style.display='';\n";
-		echo "			document.getElementById('name_new').focus();\n";
-		echo "		}\n";
-		echo "		else if (mode == 'select') {\n";
-		echo "			document.getElementById('name_new').style.display='none';\n";
-		echo "			document.getElementById('name_new').value = '';\n";
-		echo "			document.getElementById('rate').style.display='none';\n";
-		echo "			document.getElementById('btn_select').style.display='none';\n";
-		echo "			document.getElementById('name_select').selectedIndex = 0;\n";
-		echo "			document.getElementById('name_select').style.display='';\n";
-		echo "			document.getElementById('btn_new').style.display='';\n";
-		echo "		}\n";
-		echo "	}\n";
+	echo "	function name_mode(mode) {\n";
+	echo "		if (mode == 'new') {\n";
+	echo "			document.getElementById('name_select').style.display='none';\n";
+	echo "			document.getElementById('btn_new').style.display='none';\n";
+	echo "			document.getElementById('name_new').style.display='';\n";
+	echo "			document.getElementById('btn_select').style.display='';\n";
+	echo "			document.getElementById('rate').style.display='';\n";
+	echo "			document.getElementById('name_new').focus();\n";
+	echo "		}\n";
+	echo "		else if (mode == 'select') {\n";
+	echo "			document.getElementById('name_new').style.display='none';\n";
+	echo "			document.getElementById('name_new').value = '';\n";
+	echo "			document.getElementById('rate').style.display='none';\n";
+	echo "			document.getElementById('btn_select').style.display='none';\n";
+	echo "			document.getElementById('name_select').selectedIndex = 0;\n";
+	echo "			document.getElementById('name_select').style.display='';\n";
+	echo "			document.getElementById('btn_new').style.display='';\n";
+	echo "		}\n";
+	echo "	}\n";
+	echo "\n";
 
 	echo "</script>";
 
@@ -369,13 +396,14 @@
 		echo 	"<input name='action' type='hidden' value='upload'>\n";
 		echo 	"<input type='hidden' name='".$token['name']."' value='".$token['hash']."'>\n";
 		echo button::create(['type'=>'button','label'=>$text['button-add'],'icon'=>$settings->get('theme', 'button_icon_add'),'id'=>'btn_add','onclick'=>"$(this).fadeOut(250, function(){ ".$modify_add_action." $('span#form_upload').fadeIn(250); });"]);
+		echo button::create(['type'=>'button','label'=>$text['button-map'],'icon'=>$settings->get('theme', 'button_icon_map'),'id'=>'btn_back','style'=>'margin-right: 15px;','link'=>'music_on_hold_map.php']);
 		echo 	"<span id='form_upload' style='display: none;'>";
 		echo button::create(['label'=>$text['button-cancel'],'icon'=>$settings->get('theme', 'button_icon_cancel'),'type'=>'button','id'=>'btn_upload_cancel','onclick'=>"$('span#form_upload').fadeOut(250, function(){ name_mode('select'); document.getElementById('form_upload').reset(); $('#btn_add').fadeIn(250) });"]);
 		//name (category)
 			echo 	"<select name='name' id='name_select' class='formfld' style='width: auto; margin: 0;'>\n";
 			echo "		<option value='' selected='selected' disabled='disabled'>".$text['label-category']."</option>\n";
 
-			if (permission_exists('music_on_hold_domain')) {
+			if (permission_exists('music_on_hold_global')) {
 				echo "	<optgroup label='".$text['option-global']."'>\n";
 				if (!empty($streams) && @sizeof($streams) != 0) {
 					foreach ($streams as $row) {
@@ -468,9 +496,6 @@
 			$x = 0;
 			foreach ($streams as $row) {
 
-				//hide global categories if not allowed
-					if (empty($row['domain_uuid']) && !permission_exists('music_on_hold_global') && !($show == 'all' && permission_exists('music_on_hold_all'))) { continue; }
-
 				//set the variables
 					$music_on_hold_name = $row['music_on_hold_name'];
 					$music_on_hold_rate = $row['music_on_hold_rate'];
@@ -525,6 +550,7 @@
 
 				//get the music on hold path and files
 					$stream_path = str_replace("\$\${sounds_dir}",$settings->get('switch', 'sounds') ?? '', $row['music_on_hold_path']);
+					$stream_files = [];
 					if (file_exists($stream_path)) {
 						$stream_files = array_merge(glob($stream_path.'/*.wav'), glob($stream_path.'/*.mp3'), glob($stream_path.'/*.ogg'));
 					}
@@ -595,7 +621,7 @@
 							}
 							echo "	<td class='overflow'>".escape($stream_file)."</td>\n";
 							echo "	<td class='button center no-link no-wrap'>";
-							echo 		"<audio id='recording_audio_".$row_uuid."' style='display: none;' preload='none' ontimeupdate=\"update_progress('".$row_uuid."')\" onended=\"recording_reset('".$row_uuid."');\" src='music_on_hold.php?action=download&id=".escape($row['music_on_hold_uuid'])."&file=".urlencode($stream_file)."' type='".$stream_file_type."'></audio>";
+							echo 		"<audio id='recording_audio_".$row_uuid."' style='display: none;' preload='none' ontimeupdate=\"update_progress('".$row_uuid."')\" onended=\"recording_reset('".$row_uuid."');\" src='music_on_hold.php?action=download&id=".urlencode($row['music_on_hold_uuid'])."&file=".urlencode($stream_file)."' type='".$stream_file_type."'></audio>";
 							echo button::create(['type'=>'button','title'=>$text['label-play'].' / '.$text['label-pause'],'icon'=>$settings->get('theme', 'button_icon_play'),'id'=>'recording_button_'.$row_uuid,'onclick'=>"recording_play('".$row_uuid."','".urlencode($stream_file)."&moh_id=".urlencode($row['music_on_hold_uuid'])."');"]);
 							echo button::create(['type'=>'button','title'=>$text['label-download'],'icon'=>$settings->get('theme', 'button_icon_download'),'link'=>"?action=download&id=".urlencode($row['music_on_hold_uuid'])."&file=".urlencode($stream_file)]);
 							echo "	</td>\n";

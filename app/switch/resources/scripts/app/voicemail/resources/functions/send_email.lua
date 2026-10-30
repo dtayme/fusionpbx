@@ -24,7 +24,10 @@
 --	ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 --	POSSIBILITY OF SUCH DAMAGE.
 
---load libraries
+--load the functions
+require "resources.functions.shell_esc"
+
+--load the libraries
 local send_mail = require 'resources.functions.send_mail'
 local Database = require "resources.functions.database"
 local Settings = require "resources.functions.lazy_settings"
@@ -95,7 +98,6 @@ function send_email(id, uuid)
 						us.domain_uuid = :domain_uuid and
 						us.user_setting_category = 'domain' and
 						us.user_setting_subcategory = 'time_zone' and
-						us.user_setting_name = 'name' and
 						us.user_setting_enabled = true
 					order by
 						eu.insert_date asc
@@ -111,7 +113,7 @@ function send_email(id, uuid)
 
 			--default/domain setting time zone
 				if (time_zone == nil or time_zone == '') then
-					time_zone = settings:get('domain', 'time_zone', 'name');
+					time_zone = settings:get('domain', 'time_zone', 'text');
 				end
 
 			--default time zone
@@ -243,7 +245,7 @@ function send_email(id, uuid)
 				intro = voicemail_dir.."/"..id.."/intro_"..uuid.."."..vm_message_ext;
 				combined = voicemail_dir.."/"..id.."/intro_msg_"..uuid.."."..vm_message_ext;
 				if (file_exists(intro) and file_exists(file)) then
-					os.execute("sox "..intro.." "..file.." "..combined);
+					os.execute("sox "..intro.." "..shell_esc(file).." "..shell_esc(combined));
 				end
 
 			--prepare the subject
@@ -337,7 +339,7 @@ function send_email(id, uuid)
 					smtp_from,
 					voicemail_mail_to,
 					{subject, body},
-					(voicemail_file == "attach") and voicemail_path,
+					voicemail_path,
 					voicemail_base64
 				);
 

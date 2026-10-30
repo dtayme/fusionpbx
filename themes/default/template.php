@@ -19,7 +19,7 @@
 	<link rel='stylesheet' type='text/css' href='{$project_path}/resources/bootstrap/css/bootstrap-tempusdominus.min.css.php'>
 	<link rel='stylesheet' type='text/css' href='{$project_path}/resources/bootstrap/css/bootstrap-colorpicker.min.css.php'>
 	<link rel='stylesheet' type='text/css' href='{$project_path}/resources/fontawesome/css/all.min.css.php'>
-	<link rel='stylesheet' type='text/css' href='{$project_path}/themes/default/css.php?updated=202512160230'>
+	<link rel='stylesheet' type='text/css' href='{$project_path}/themes/default/css.php?updated=202608261400'>
 {*//link to custom css file *}
 	{if !empty($settings.theme.custom_css)}
 		<link rel='stylesheet' type='text/css' href='{$settings.theme.custom_css}'>
@@ -37,6 +37,30 @@
 	<script language='JavaScript' type='text/javascript' src='{$project_path}/resources/momentjs/moment-with-locales.min.js.php'></script>
 	<script language='JavaScript' type='text/javascript' src='{$project_path}/resources/bootstrap/js/bootstrap.min.js.php'></script>
 	<script language='JavaScript' type='text/javascript' src='{$project_path}/resources/bootstrap/js/bootstrap-tempusdominus.min.js.php'></script>
+	<script language='JavaScript' type='text/javascript'>
+		{literal}
+			//set tempusdominus (calendar/datetime picker) defaults here, not on document ready, so that
+			//pickers built by inline page scripts during body parse also get the correct font awesome icons
+			$.fn.datetimepicker.Constructor.Default = $.extend({}, $.fn.datetimepicker.Constructor.Default, {
+				buttons: {
+					showToday: true,
+					showClear: true,
+					showClose: true,
+				},
+				icons: {
+					time: 'fa-solid fa-clock',
+					date: 'fa-solid fa-calendar-days',
+					up: 'fa-solid fa-arrow-up',
+					down: 'fa-solid fa-arrow-down',
+					previous: 'fa-solid fa-chevron-left',
+					next: 'fa-solid fa-chevron-right',
+					today: 'fa-solid fa-calendar-check',
+					clear: 'fa-solid fa-trash',
+					close: 'fa-solid fa-xmark',
+				}
+			});
+		{/literal}
+	</script>
 	<script language='JavaScript' type='text/javascript' src='{$project_path}/resources/bootstrap/js/bootstrap-colorpicker.min.js.php'></script>
 	<script language='JavaScript' type='text/javascript' src='{$project_path}/resources/bootstrap/js/bootstrap-pwstrength.min.js.php'></script>
 	<script language='JavaScript' type='text/javascript'>{literal}window.FontAwesomeConfig = { autoReplaceSvg: false }{/literal}</script>
@@ -67,9 +91,10 @@
 					message_text.html(msg);
 					message_text.on('click', function() {
 						var object = $(this);
-						object.clearQueue().finish();
+						object.stop(true);
+						$('#message_container').stop(true);
 						$('#message_container div').remove();
-						$('#message_container').css({opacity: 0, 'height': 0}).css({'height': 'auto'});
+						$('#message_container').css({'opacity': 1, 'height': 0});
 					} );
 					$('#message_container').append(message_text);
 					message_text.css({'height': 'auto'}).animate({opacity: 1}, 250, function(){
@@ -238,8 +263,9 @@
 		//message bar hide on hover
 			{literal}
 			$('#message_container').on('mouseenter',function() {
+				$('#message_container').stop(true);
 				$('#message_container div').remove();
-				$('#message_container').css({opacity: 0, 'height': 0}).css({'height': 'auto'});
+				$('#message_container').css({'opacity': 1, 'height': 0});
 			});
 			{/literal}
 
@@ -268,16 +294,26 @@
 
 				function hide_domains() {
 					$('#domains_visible').val(0);
-					$(document).ready(function() {
-						$('#domains_block').animate({marginRight: '-=300'}, 400, function() {
-							$('#domains_search').val('');
-							$('.navbar').css('margin-right','0'); //restore navbar margin
-							$('#domains_container').css('right','0'); //domain container right position
-							$('#domains_container').hide();
-							$('body').css({'margin-right':'0','overflow':'auto'}); //enable body scroll bars
-							document.activeElement.blur();
-						});
+					//stop queued/running animations so the cleanup below is deterministic
+					$('#domains_block').stop(true);
+					$('#domains_block').animate({marginRight: '-=300'}, 400, function() {
+						$('#domains_search').val('');
+						$('.navbar').css('margin-right','0'); //restore navbar margin
+						$('#domains_container').css('right','0'); //domain container right position
+						$('#domains_container').hide();
+						$('body').css({'margin-right':'0','overflow':'auto'}); //enable body scroll bars
+						try { document.activeElement.blur(); } catch (e) {}
 					});
+					//safety net: the overlay must never remain as an invisible
+					//full-height dead zone above the fixed menu (z-index 99990)
+					window.setTimeout(function() {
+						if ($('#domains_visible').val() == 0) {
+							$('.navbar').css('margin-right','0');
+							$('#domains_container').css('right','0');
+							$('#domains_container').hide();
+							$('body').css({'margin-right':'0','overflow':'auto'});
+						}
+					}, 800);
 				}
 				{/literal}
 			{/if}
@@ -430,19 +466,19 @@
 				//key: [ctrl]+[a], list,edit: to check all
 					{if $settings.theme.keyboard_shortcut_check_all_enabled}
 						{literal}
-						if ((((e.which == 97 || e.which == 65) && (e.ctrlKey || e.metaKey) && !e.shiftKey) || e.which == 19) && !(e.target.tagName == 'INPUT' && e.target.type == 'text') && e.target.tagName != 'TEXTAREA') {
-							var all_checkboxes;
-							all_checkboxes = document.querySelectorAll('table.list tr.list-header th.checkbox input[name=checkbox_all]');
-							if (typeof all_checkboxes != 'object' || all_checkboxes.length == 0) {
-								all_checkboxes = document.querySelectorAll('td.edit_delete_checkbox_all > span > input[name=checkbox_all]');
-							}
-							if (typeof all_checkboxes == 'object' && all_checkboxes.length > 0) {
-								e.preventDefault();
-								for (var x = 0, max = all_checkboxes.length; x < max; x++) {
-									all_checkboxes[x].click();
-								}
-							}
-						}
+						// if ((((e.which == 97 || e.which == 65) && (e.ctrlKey || e.metaKey) && !e.shiftKey) || e.which == 19) && !(e.target.tagName == 'INPUT' && e.target.type == 'text') && e.target.tagName != 'TEXTAREA') {
+						// 	var all_checkboxes;
+						// 	all_checkboxes = document.querySelectorAll('table.list tr.list-header th.checkbox input[name=checkbox_all]');
+						// 	if (typeof all_checkboxes != 'object' || all_checkboxes.length == 0) {
+						// 		all_checkboxes = document.querySelectorAll('td.edit_delete_checkbox_all > span > input[name=checkbox_all]');
+						// 	}
+						// 	if (typeof all_checkboxes == 'object' && all_checkboxes.length > 0) {
+						// 		e.preventDefault();
+						// 		for (var x = 0, max = all_checkboxes.length; x < max; x++) {
+						// 			all_checkboxes[x].click();
+						// 		}
+						// 	}
+						// }
 						{/literal}
 
 					{/if}
@@ -549,25 +585,6 @@
 		//initialize bootstrap tempusdominus (calendar/datetime picker) plugin
 			{literal}
 			$(function() {
-				//set defaults
-					$.fn.datetimepicker.Constructor.Default = $.extend({}, $.fn.datetimepicker.Constructor.Default, {
-						buttons: {
-							showToday: true,
-							showClear: true,
-							showClose: true,
-						},
-						icons: {
-							time: 'fa-solid fa-clock',
-							date: 'fa-solid fa-calendar-days',
-							up: 'fa-solid fa-arrow-up',
-							down: 'fa-solid fa-arrow-down',
-							previous: 'fa-solid fa-chevron-left',
-							next: 'fa-solid fa-chevron-right',
-							today: 'fa-solid fa-calendar-check',
-							clear: 'fa-solid fa-trash',
-							close: 'fa-solid fa-xmark',
-						}
-					});
 				//define formatting of individual classes
 					$('.datepicker').datetimepicker({ format: 'YYYY-MM-DD', });
 					{/literal}
@@ -732,6 +749,681 @@
 			for (var i = 0; i < switches.length; i++) {
 				switches[i].addEventListener('click', toggle, false);
 			}
+			{/literal}
+
+		// Searchable select box
+			{literal}
+			(function() {
+				const searchable_selects = document.querySelectorAll('.searchable_select');
+
+				searchable_selects.forEach(original_select => {
+					const wrapper = document.createElement('div');
+					wrapper.className = 'searchable_select_wrapper';
+					wrapper.id = original_select.id + '_search';
+					wrapper.style.display = getComputedStyle(original_select).display;
+					wrapper.style.width = getComputedStyle(original_select).width;
+					wrapper.style.marginRight = (parseInt(getComputedStyle(original_select).marginRight) * 2) + 'px';
+					wrapper.style.marginLeft = (parseInt(getComputedStyle(original_select).marginLeft) - 1) + 'px';
+
+					original_select.parentNode.insertBefore(wrapper, original_select);
+					original_select.style.display = 'none';
+
+					const input = document.createElement('input');
+					input.type = 'text';
+					input.className = 'formfld';
+					input.placeholder = original_select.querySelector('option').innerText ? original_select.querySelector('option').innerText : '{/literal}{$text.label_search}{literal}';
+					wrapper.appendChild(input);
+
+					const actions = document.createElement('div');
+					actions.className = 'actions';
+					wrapper.appendChild(actions);
+
+					actions.addEventListener('click', function(event) {
+						event.preventDefault();
+						event.stopPropagation();
+						const is_open = dropdown.style.display === 'block';
+
+						dropdown.style.display = is_open ? 'none' : 'block';
+
+						if (!is_open) {
+							input.focus();
+							render_items(input.value);
+						}
+					});
+
+					const arrow_icon = document.createElement('i');
+					arrow_icon.style = 'transform: scale(0.75, 0.80);';
+					arrow_icon.className = 'fa-solid fa-angle-down';
+					actions.appendChild(arrow_icon);
+
+					const clear_button = document.createElement('button');
+					clear_button.type = 'button';
+					clear_button.className = 'clear_search_button';
+					clear_button.innerHTML = '&times;';
+					clear_button.setAttribute('aria-label', 'Clear search');
+					actions.appendChild(clear_button);
+
+					const update_visibility = () => {
+						clear_button.style.display = input.value.trim() !== '' ? 'inline-flex' : 'none';
+						arrow_icon.style.display = input.value.trim() !== '' ? 'none' : 'inline-flex';
+					};
+
+					clear_button.addEventListener('click', function(event) {
+						event.preventDefault();
+						event.stopPropagation();
+
+						input.value = '';
+						original_select.value = '';
+
+						// Prevent form submission
+						if (original_select.hasAttribute('onchange')) {
+							const onchange_value = original_select.attributes.onchange.nodeValue;
+							original_select.attributes.onchange.nodeValue = onchange_value.replace('this.form.submit();', '');
+
+							original_select.dispatchEvent(new Event('change'));
+							original_select.attributes.onchange.nodeValue = onchange_value;
+						}
+						else {
+							original_select.dispatchEvent(new Event('change'));
+						}
+
+						update_visibility();
+						render_items();
+						input.focus();
+					});
+
+					const dropdown = document.createElement('div');
+					dropdown.className = 'search_results';
+					wrapper.appendChild(dropdown);
+
+					// Handle initial selection
+					if (original_select.value) {
+						const initial_option = original_select.querySelector(`option[value="${original_select.value}"]`);
+						if (initial_option) input.value = initial_option.label;
+					}
+					update_visibility();
+
+					function render_items(filter = '') {
+						dropdown.innerHTML = '';
+						const lower_filter = filter.toLowerCase();
+						let current_group = null;
+						let has_results = false;
+
+						original_select.querySelectorAll('option').forEach(option => {
+							let option_value = option.value;
+							let option_label = option.textContent.trim();
+							let option_group = option.parentNode?.tagName === 'OPTGROUP' ? option.parentNode.label : '';
+							const matches_label = option_label.toLowerCase().includes(lower_filter);
+							const matches_group = option_group.toLowerCase().includes(lower_filter);
+
+							if (matches_label || matches_group) {
+								has_results = true;
+								if (option_group && option_group !== current_group) {
+									current_group = option_group;
+									const group_title = document.createElement('div');
+									group_title.className = 'optgroup_header_row';
+									group_title.textContent = current_group;
+									dropdown.appendChild(group_title);
+								}
+
+								const item = document.createElement('div');
+								item.className = 'search_result_item';
+								if (original_select.value === option_value) item.classList.add('active');
+
+								item.dataset.value = option_value;
+								item.textContent = option_label;
+								item.style.paddingLeft = option_group ? '26px' : '';
+
+								dropdown.appendChild(item);
+							}
+						});
+
+						if (!has_results) {
+							const no_results = document.createElement('div');
+							no_results.className = 'no_results_message';
+							no_results.textContent = '{/literal}{$text.label_no_results}{literal}';
+							dropdown.appendChild(no_results);
+						}
+					}
+
+					function select_item(option) {
+						input.value = option.label;
+						original_select.value = option.value;
+						dropdown.style.display = 'none';
+						original_select.dispatchEvent(new Event('change'));
+						update_visibility();
+					}
+
+					input.addEventListener('input', (event) => {
+						const val = event.target.value;
+						const trimmed = val.trim();
+
+						if (trimmed === '') {
+							original_select.value = '';
+							original_select.dispatchEvent(new Event('change'));
+						}
+
+						render_items(val);
+						dropdown.style.display = 'block';
+						update_visibility();
+					});
+
+					input.addEventListener('focus', () => {
+						// Hide other dropdowns before showing the active one
+						document.querySelectorAll('.search_results').forEach(dropdown => { dropdown.style.display = 'none'; });
+						dropdown.style.display = 'block';
+						render_items(input.value);
+					});
+
+					// Event delegation for dropdown items
+					dropdown.addEventListener('click', (event) => {
+						const item = event.target.closest('.search_result_item');
+						if (item && !item.classList.contains('no_results_message')) {
+							const option_found = original_select.querySelector(`option[value="${item.dataset.value}"]`);
+							if (option_found) select_item(option_found);
+						}
+					});
+
+					// Initial render
+					render_items();
+				});
+
+				// Global outside-click handler
+				document.addEventListener('click', (event) => {
+					if (!event.target.closest('.searchable_select_wrapper')) {
+						document.querySelectorAll('.search_results').forEach(dropdown => {
+							dropdown.style.display = 'none';
+						});
+					}
+				});
+			})();
+			{/literal}
+
+		//domain select: searchable picker
+			{literal}
+			(function() {
+				var domain_cache = null;
+				var domain_cache_loading = false;
+				var domain_cache_callbacks = [];
+
+				function fetch_domains(callback) {
+					if (domain_cache !== null) {
+						callback(domain_cache);
+						return;
+					}
+					domain_cache_callbacks.push(callback);
+					if (domain_cache_loading) { return; }
+					domain_cache_loading = true;
+					var xhttp = new XMLHttpRequest();
+					xhttp.onreadystatechange = function() {
+						if (this.readyState === 4) {
+							var results = [];
+							if (this.status === 200) {
+								try { results = JSON.parse(this.responseText) || []; }
+								catch (error) { results = []; }
+							}
+							domain_cache = results;
+							domain_cache_loading = false;
+							while (domain_cache_callbacks.length) {
+								domain_cache_callbacks.shift()(domain_cache);
+							}
+						}
+					};
+					xhttp.open("GET", "/core/domains/domain_json.php?{/literal}{$domain_json_token_name}={$domain_json_token_hash}{literal}", true);
+					xhttp.send();
+				}
+
+				function init_domain_search_select(select) {
+					if (!select || select.dataset.domainSearchInit === 'true') { return; }
+					select.dataset.domainSearchInit = 'true';
+
+					var option_values = {};
+					var option_order = [];
+					var global_option = null;
+					for (var o = 0; o < select.options.length; o++) {
+						var option = select.options[o];
+						var option_text = (option.text || option.innerText || '').trim();
+						if (option.value === '') {
+							if (!option.disabled && option_text !== '') {
+								global_option = { domain_uuid: '', domain_name: option_text };
+							}
+							continue;
+						}
+						option_values[option.value] = option_text;
+						option_order.push(option.value);
+					}
+					if (option_order.length === 0) { return; }
+
+					var picker = document.createElement('div');
+					picker.className = 'domain-search-picker';
+					if (select.id) {
+						picker.id = select.id + '_domain_search_picker';
+					}
+
+					var input = document.createElement('input');
+					input.type = 'text';
+					input.className = 'formfld domain-search-input';
+					input.placeholder = '{/literal}{$text.label_search_domains}{literal}..';
+
+					var clear_button = document.createElement('button');
+					clear_button.type = 'button';
+					clear_button.className = 'domain-search-clear';
+					clear_button.innerHTML = '&times;';
+					clear_button.setAttribute('aria-label', 'Clear search');
+
+					var results = document.createElement('div');
+					results.className = 'domain-search-results'; 
+					results.setAttribute('role', 'listbox');
+					results.style.display = 'none';
+
+					picker.appendChild(input);
+					picker.appendChild(clear_button);
+					picker.appendChild(results);
+					select.parentNode.insertBefore(picker, select);
+
+					clear_button.addEventListener('click', function(e) {
+						e.preventDefault();
+						e.stopPropagation();
+						input.value = '';
+						active_index = -1;
+						clear_button.style.display = 'none';
+						render_results();
+						input.focus();
+					});
+
+					var dataset = [];
+					var active_index = -1;
+					var current_items = [];
+
+					function get_selected_label() {
+						if (select.selectedIndex > -1) {
+							var selected_option = select.options[select.selectedIndex];
+							if (selected_option && selected_option.value !== '') {
+								return selected_option.text || selected_option.innerText || '';
+							}
+							if (selected_option && selected_option.value === '' && selected_option.innerText == '{/literal}{$text.label_global}{literal}') {
+								return selected_option.text || selected_option.innerText || '';
+							}
+						}
+						return '';
+					}
+
+					function sync_input_to_select() {
+						input.value = get_selected_label();
+						clear_button.style.display = (input.value.trim() !== '') ? 'inline-flex' : 'none';
+					}
+
+					function close_results() {
+						active_index = -1;
+						results.style.display = 'none';
+						results.innerHTML = '';
+					}
+
+					function open_results() {
+						results.style.display = 'block';
+					}
+
+					function score_item(item, query) {
+						if (!query) { return 1; }
+						var score = 0;
+						var name = item.domain_name_lc;
+						var description = item.domain_description_lc;
+						if (name === query) { score += 1000; }
+						if (name.indexOf(query) === 0) { score += 500; }
+						else if (name.indexOf(query) > -1) { score += 300; }
+						if (description && description.indexOf(query) > -1) { score += 100; }
+						return score;
+					}
+
+					function render_results() {
+						var query = (input.value || '').toLowerCase().trim();
+						var matches = [];
+						if (global_option !== null) {
+							if (!query || global_option.domain_name.toLowerCase().indexOf(query) > -1) {
+								matches.push({
+									domain_uuid: '',
+									domain_name: global_option.domain_name,
+									domain_name_lc: global_option.domain_name.toLowerCase(),
+									domain_description: '',
+									domain_description_lc: '',
+									score: query ? 800 : 2
+								});
+							}
+						}
+						for (var i = 0; i < dataset.length; i++) {
+							var score = score_item(dataset[i], query);
+							if (score > 0) {
+								dataset[i].score = score;
+								matches.push(dataset[i]);
+							}
+						}
+
+						matches.sort(function(a, b) {
+							if (b.score !== a.score) { return b.score - a.score; }
+							return a.domain_name_lc.localeCompare(b.domain_name_lc);
+						});
+
+						current_items = matches.slice(0, 50);
+						results.innerHTML = '';
+						active_index = current_items.length > 0 ? 0 : -1;
+
+						if (current_items.length === 0) {
+							var empty = document.createElement('div');
+							empty.className = 'domain-search-empty';
+							empty.innerText = '{/literal}{$text.label_no_matching_domains}{literal}...';
+							results.appendChild(empty);
+							open_results();
+							return;
+						}
+
+						for (var r = 0; r < current_items.length; r++) {
+							var row = document.createElement('div');
+							row.className = 'domain-search-result-item' + (r === active_index ? ' active' : '');
+							row.setAttribute('data-index', r);
+							var name = document.createElement('span');
+							name.className = 'domain-search-result-name';
+							name.innerText = current_items[r].domain_name;
+							row.appendChild(name);
+							if (current_items[r].domain_description) {
+								var desc = document.createElement('span');
+								desc.className = 'domain-search-result-description';
+								desc.innerText = current_items[r].domain_description;
+								row.appendChild(desc);
+							}
+							results.appendChild(row);
+						}
+						// Toggle clear button visibility based on current input
+						clear_button.style.display = (input.value.trim() !== '') ? 'inline-flex' : 'none';
+
+						open_results();
+					}
+
+					function update_active_row() {
+						var rows = results.querySelectorAll('.domain-search-result-item');
+						for (var i = 0; i < rows.length; i++) {
+							rows[i].classList.toggle('active', i === active_index);
+						}
+					}
+
+					function select_value(domain_uuid) {
+						select.value = domain_uuid;
+						select.dispatchEvent(new Event('change', { bubbles: true }));
+						sync_input_to_select();
+						close_results();
+					}
+
+					results.addEventListener('mousedown', function(event) {
+						var row = event.target.closest('.domain-search-result-item');
+						if (!row) { return; }
+						event.preventDefault();
+						var index = parseInt(row.getAttribute('data-index'), 10);
+						if (!isNaN(index) && current_items[index]) {
+							select_value(current_items[index].domain_uuid);
+						}
+					});
+
+					input.addEventListener('focus', function() {
+						render_results();
+					});
+
+					input.addEventListener('input', function() {
+						render_results();
+					});
+
+					input.addEventListener('keydown', function(event) {
+						if (results.style.display !== 'block') {
+							if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+								render_results();
+								event.preventDefault();
+							}
+							return;
+						}
+						if (event.key === 'ArrowDown') {
+							if (active_index < current_items.length - 1) { active_index++; }
+							update_active_row();
+							event.preventDefault();
+						}
+						else if (event.key === 'ArrowUp') {
+							if (active_index > 0) { active_index--; }
+							update_active_row();
+							event.preventDefault();
+						}
+						else if (event.key === 'Enter') {
+							if (active_index > -1 && current_items[active_index]) {
+								select_value(current_items[active_index].domain_uuid);
+								event.preventDefault();
+							}
+						}
+						else if (event.key === 'Escape') {
+							close_results();
+						}
+					});
+
+					select.addEventListener('change', function() {
+						sync_input_to_select();
+					});
+
+					function sync_picker_visibility() {
+						var hide = window.getComputedStyle(select).display === 'none';
+						picker.style.display = hide ? 'none' : 'inline-block';
+						select.style.display = 'none';
+						if (hide) { close_results(); }
+					}
+					sync_picker_visibility();
+					select._domainSearchSyncVisibility = sync_picker_visibility;
+
+					document.addEventListener('mousedown', function(event) {
+						if (!picker.contains(event.target)) {
+							close_results();
+						}
+					});
+
+					fetch_domains(function(domains) {
+						var domains_by_uuid = {};
+						for (var i = 0; i < domains.length; i++) {
+							domains_by_uuid[domains[i].domain_uuid] = domains[i];
+						}
+						var longest_label = global_option !== null ? global_option.domain_name.length : 0;
+						for (var x = 0; x < option_order.length; x++) {
+							var domain_uuid = option_order[x];
+							var domain = domains_by_uuid[domain_uuid] || {};
+							var domain_name = (domain.domain_name || option_values[domain_uuid] || '').trim();
+							if (!domain_name) { continue; }
+							if (domain_name.length > longest_label) { longest_label = domain_name.length; }
+							var domain_description = (domain.domain_description || '').trim();
+							dataset.push({
+								domain_uuid: domain_uuid,
+								domain_name: domain_name,
+								domain_name_lc: domain_name.toLowerCase(),
+								domain_description: domain_description,
+								domain_description_lc: domain_description.toLowerCase(),
+								score: 0
+							});
+						}
+						var width_ch = Math.max(18, Math.min(longest_label + 2, 80));
+						input.style.width = width_ch + 'ch';
+						sync_input_to_select();
+					});
+				}
+
+				window.sync_domain_search_select_visibility = function(select_id) {
+					var select = document.getElementById(select_id);
+					if (select && typeof select._domainSearchSyncVisibility === 'function') {
+						select._domainSearchSyncVisibility();
+					}
+				};
+
+				window.init_domain_search_selects = function() {
+					var selectors = document.querySelectorAll("select[name='domain_uuid'], select[id='domain_uuid'], select[data-domain-search='true']");
+					for (var i = 0; i < selectors.length; i++) {
+						if (selectors[i].dataset.domainSearch === 'false') { continue; }
+						if (selectors[i].multiple) { continue; }
+						init_domain_search_select(selectors[i]);
+					}
+				};
+			})();
+
+			window.init_domain_search_selects();
+			{/literal}
+
+		// Multi select box with search
+			{literal}
+			(function() {
+				const container = document.querySelector('.multiselect_container');
+
+				if (container) {
+					const trigger_btn = container.querySelector('.selected_values');
+					const dropdown_list = container.querySelector('.dropdown_list');
+					const search_input = container.querySelector('.search_box');
+					const options_list = container.querySelector('.options_list');
+					const input_name = options_list.getAttribute('name');
+					const no_results = container.querySelector('#no_results');
+					const placeholder = container.querySelector('.placeholder_text');
+					let is_open = false;
+
+					// Toggle dropdown open/close
+					trigger_btn.addEventListener('click', (event) => {
+						event.stopPropagation();
+						is_open = !is_open;
+						if (is_open) {
+							dropdown_list.classList.add('open');
+							search_input.focus();
+						}
+						else {
+							dropdown_list.classList.remove('open');
+						}
+					});
+
+					// Close dropdown if clicked outside
+					document.addEventListener('click', (event) => {
+						if (!container.contains(event.target)) {
+							is_open = false;
+							dropdown_list.classList.remove('open');
+						}
+					});
+
+					// Prevent dropdown from closing when clicking inside the dropdown
+					dropdown_list.addEventListener('click', (event) => {
+						event.stopPropagation();
+					});
+
+					// Handle Search Filtering
+					search_input.addEventListener('input', (event) => {
+						const search_term = event.target.value.toLowerCase();
+						const option_items = document.querySelectorAll('.option_item');
+						let visible_count = 0;
+
+						option_items.forEach(item => {
+							const text = item.innerText.toLowerCase();
+
+							if (text.includes(search_term)) {
+								item.style.display = 'block';
+								visible_count++;
+							}
+							else {
+								item.style.display = 'none';
+							}
+						});
+
+						if (visible_count === 0) {
+							no_results.style.display = 'block';
+						}
+						else {
+							no_results.style.display = 'none';
+						}
+					});
+
+					// Handle checkbox selection
+					container.addEventListener('change', (event) => {
+						if (event.target.type === 'checkbox') {
+							// If unchecked, remove the corresponding hidden input
+							if (!event.target.checked) {
+								const value = event.target.value;
+								const hidden_input = document.querySelector(`input[name="${input_name}"][value="${value}"]`);
+								if (hidden_input) {
+									hidden_input.remove();
+								}
+							}
+
+							// Update visual tags and handle checked boxes
+							update_selected_values();
+						}
+					});
+
+					// Handle clicking the text part of the option
+					container.addEventListener('click', (event) => {
+						if (event.target.classList.contains('option_item')) {
+							const checkbox = event.target.querySelector('input[type="checkbox"]');
+							if (checkbox) {
+								checkbox.checked = !checkbox.checked;
+								update_selected_values();
+							}
+						}
+					});
+
+					// Update display logic (tags & hidden input)
+					function update_selected_values() {
+						const checked_boxes = document.querySelectorAll('.option_item input:checked');
+						const selected_count = checked_boxes.length;
+
+						// Update visual tags
+						if (selected_count === 0) {
+							placeholder.style.display = 'block';
+							trigger_btn.innerHTML = `<span class="placeholder_text">{/literal}{$text.label_select}{literal}...</span>`;
+							trigger_btn.innerHTML += `<i class='fa-solid fa-angle-down' style='position: absolute; right: 6px; transform: scale(0.70, 0.75);'></i>`;
+						}
+						else {
+							placeholder.style.display = 'none';
+							let html = '';
+
+							checked_boxes.forEach(box => {
+								const label = box.parentElement.innerText;
+
+								// Create a hidden input for each selected tag
+								create_hidden_input_for_tag(label, box.value);
+
+								html += `<span class="tag" data-value="${box.value}">`;
+								html += `	${label}`;
+								html += `	<span onclick="remove_option('${box.value}')">&times;</span>`;
+								html += `</span>`;
+							});
+
+							trigger_btn.innerHTML = html;
+						}
+					}
+
+					// Helper function to remove a tag when clicked (External to scope)
+					window.remove_option = function(value) {
+						const checkbox = document.querySelector(`input[value="${value}"]`);
+						if (checkbox) {
+							checkbox.checked = false;
+
+							// Remove the hidden input corresponding to this tag
+							const hidden_input = document.querySelector(`input[name="${input_name}"][value="${value}"]`);
+							if (hidden_input) {
+								hidden_input.remove();
+							}
+
+							update_selected_values();
+						}
+					};
+
+					// Function to create a hidden input for each selected tag
+					function create_hidden_input_for_tag(label, value) {
+						const existing_hidden_input = document.querySelector(`input[name="${input_name}"][value="${value}"]`);
+						if (!existing_hidden_input) {
+							const hidden_input = document.createElement('input');
+							hidden_input.type = 'hidden';
+							hidden_input.name = input_name;
+							hidden_input.value = value;
+							container.appendChild(hidden_input);
+						}
+					}
+
+					// Initialize state
+					update_selected_values();
+				}
+			})();
 			{/literal}
 
 	{literal}
@@ -914,6 +1606,42 @@
 		}
 		{/literal}
 
+	//handle action bar style on small screens
+		{literal}
+		window.addEventListener('load', function(){
+			action_bar_overflow();
+		}, false);
+		window.addEventListener('resize', function(){
+			action_bar_overflow();
+		}, false);
+		function action_bar_overflow() {
+			if (document.querySelector("#action_bar")) {
+				const action_bar = document.querySelector("#action_bar");
+				const actions = document.querySelector("#action_bar > .actions");
+				const paging_controls_mini = actions.querySelector(":scope > form#form_search > span:has(span > button)");
+
+				actions.style.cssText = '';
+				if (paging_controls_mini) {
+					paging_controls_mini.style.cssText = '';
+				}
+
+				//overflow detected
+				if (action_bar.offsetHeight > 60) {
+					actions.style.cssText = 'width: 100%; margin: 20px 0 0 0; position: relative; display: flex; row-gap: 5px; flex-wrap: wrap;';
+					if (paging_controls_mini) {
+						paging_controls_mini.style.cssText = 'position: absolute; top: -42px; right: 0;';
+					}
+				}
+				else {
+					actions.style.cssText = '';
+					if (paging_controls_mini) {
+						paging_controls_mini.style.cssText = '';
+					}
+				}
+			}
+		}
+		{/literal}
+
 	//enable button class button
 		{literal}
 		function button_enable(button_id) {
@@ -957,6 +1685,7 @@
 			btn_toggle = document.getElementById("btn_toggle");
 			btn_delete = document.getElementById("btn_delete");
 			btn_download = document.getElementById("btn_download");
+			btn_reload = document.getElementById("btn_reload");
 			btn_transcribe = document.getElementById("btn_transcribe");
 			any_revealed = document.getElementsByClassName('revealed');
 			if (checked == true) {
@@ -964,6 +1693,7 @@
 				if (btn_toggle) { btn_toggle.style.display = "inline"; }
 				if (btn_delete) { btn_delete.style.display = "inline"; }
 				if (btn_download) { btn_download.style.display = "inline"; }
+				if (btn_reload) { btn_reload.style.display = "inline"; }
 				if (btn_transcribe) { btn_transcribe.style.display = "inline"; }
 				if (any_revealed) { [...any_revealed].map(btn => btn.style.display = "inline"); }
 			}
@@ -1167,6 +1897,7 @@
 	{*//domain selector *}
 	function search_domains(element_id) {
 		var xhttp = new XMLHttpRequest();
+		var obj, domain_uuid, domain_name, link_label;
 		xhttp.onreadystatechange = function() {
 			//if (this.readyState == 4 && this.status == 200) {
 			//	document.getElementById(element_id).innerHTML = this.responseText;
@@ -1240,7 +1971,7 @@
 				}
 			}
 		};
-		search = document.getElementById('domains_search');
+		var search = document.getElementById('domains_search');
 		if (search.value) {
 			//xhttp.open("GET", "/core/domains/domain_list.php?search="+search.value, true);
 			xhttp.open("GET", "/core/domains/domain_json.php?search="+search.value+"&{$domain_json_token_name}={$domain_json_token_hash}", true);

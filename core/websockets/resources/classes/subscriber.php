@@ -449,6 +449,17 @@ class subscriber {
 	}
 
 	/**
+	 * Returns the domain UUID used.
+	 * <p>Note:<br>
+	 * This value is not validated in the object and must be validated.</p>
+	 *
+	 * @return string
+	 */
+	public function get_domain_uuid(): string {
+		return $this->domain_uuid;
+	}
+
+	/**
 	 * Returns the associated socket
 	 *
 	 * @return resource
@@ -873,6 +884,9 @@ class subscriber {
 	 *       location.
 	 */
 	public static function get_token_file($token_name): string {
+		// Sanitize the token name to prevent path traversal / arbitrary file access.
+		// Legitimate token names are 64-char hex strings (token::create()), so [A-Za-z0-9_] is safe.
+		$token_name = preg_replace('/[^A-Za-z0-9_]/', '', (string) $token_name);
 		// Try to store in RAM first
 		if (is_dir('/dev/shm') && is_writable('/dev/shm')) {
 			$token_file = '/dev/shm/' . $token_name . '.php';

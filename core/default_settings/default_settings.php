@@ -17,7 +17,7 @@
 
 	The Initial Developer of the Original Code is
 	Mark J Crane <markjcrane@fusionpbx.com>
-	Portions created by the Initial Developer are Copyright (C) 2008 - 2024
+	Portions created by the Initial Developer are Copyright (C) 2008 - 2026
 	the Initial Developer. All Rights Reserved.
 
 	Contributor(s):
@@ -27,6 +27,7 @@
 //includes files
 	require_once dirname(__DIR__, 2) . "/resources/require.php";
 	require_once "resources/check_auth.php";
+	require_once "resources/paging.php";
 
 //check permissions
 	if (!permission_exists('default_setting_view')) {
@@ -48,9 +49,6 @@
 	$text = $language->get();
 
 //set the variables
-	$search = $_REQUEST['search'] ?? '';
-	$show = $_REQUEST['show'] ?? '';
-	$default_setting_category = $_REQUEST['default_setting_category'] ?? '';
 	if (!empty($_POST['default_settings'])) {
 		$action = $_POST['action'];
 		$domain_uuid = $_POST['domain_uuid'];
@@ -60,6 +58,14 @@
 		$domain_uuid = '';
 		$default_settings = '';
 	}
+
+// Set variables from http GET parameters
+	$page = is_numeric($_GET['page'] ?? '') ? $_GET['page'] : 0;
+	$order_by = preg_replace('#[^a-zA-Z0-9_\-]#', '', $_GET['order_by'] ?? '');
+	$order = ($_GET['order'] ?? '') === 'desc' ? 'desc' : 'asc';
+	$search = $_GET['search'] ?? '';
+	$show = $_GET['show'] ?? '';
+	$default_setting_category = $_GET['default_setting_category'] ?? '';
 
 //sanitize the variables
 	$action = preg_replace('#[^a-zA-Z0-9_\-\.]#', '', $action);
@@ -78,15 +84,27 @@
 //set from session variables
 	$list_row_edit_button = $settings->get('theme', 'list_row_edit_button', false);
 
-//build the query string
-	$query_string = '';
+// Build the query string
+	$url_params = [];
+	if (!empty($page)) {
+		$url_params['page'] = $page;
+	}
+	if (!empty($_GET['order_by'])) {
+		$url_params['order_by'] = $order_by;
+	}
+	if (!empty($_GET['order'])) {
+		$url_params['order'] = $order;
+	}
 	if (!empty($search)) {
-		$query_string .= 'search='.urlencode($search);
+		$url_params['search'] = $search;
+	}
+	if (!empty($show) && $show == 'all' && permission_exists('stream_all')) {
+		$url_params['show'] = $show;
 	}
 	if (!empty($default_setting_category)) {
-		if ($query_string == '') { $query_string = ''; } else { $query_string .= '&'; }
-		$query_string .= 'default_setting_category='.urlencode($default_setting_category);
+		$url_params['default_setting_category'] = $default_setting_category;
 	}
+	$query_string = http_build_query($url_params);
 
 //process the http post data by action
 	if (!empty($action) && !empty($default_settings)) {
@@ -111,7 +129,7 @@
 				}
 				break;
 		}
-		header('Location: default_settings.php?'.(!empty($query_string) ? $query_string : null));
+		header('Location: default_settings.php'.($query_string ? '?'.$query_string : ''));
 		exit;
 	}
 
@@ -138,6 +156,12 @@
 	}
 	$num_rows = $database->select($sql, $parameters ?? null, 'column');
 
+//prepare to page the results
+	$rows_per_page = 500;
+	list($paging_controls, $rows_per_page) = paging($num_rows, $query_string, $rows_per_page);
+	list($paging_controls_mini, $rows_per_page) = paging($num_rows, $query_string, $rows_per_page, true);
+	$offset = $rows_per_page * $page;
+
 //get the list
 	$sql = "select default_setting_uuid, default_setting_category, default_setting_subcategory, default_setting_name, ";
 	$sql .= "default_setting_value, default_setting_order, cast(default_setting_enabled as text), default_setting_description ";
@@ -158,7 +182,7 @@
 		$parameters['default_setting_category'] = strtolower($default_setting_category);
 	}
 	$sql .= order_by($order_by, $order, 'default_setting_category, default_setting_subcategory, default_setting_order', 'asc');
-	//$sql .= limit_offset($rows_per_page, $offset ?? '');  //$offset is always null
+	$sql .= limit_offset($rows_per_page, $offset ?? '');
 	$default_settings = $database->select($sql, $parameters ?? null, 'all');
 	unset($sql, $parameters);
 
@@ -208,8 +232,6 @@
 		//unset variables
 		unset($default_setting_categories, $default_setting_category, $category);
 	}
-
-
 
 //get the list of installed apps from the core and mod directories
 	$config_list = glob(dirname(__DIR__, 2) . "/*/*/app_config.php");
@@ -273,12 +295,14 @@
 		echo "		document.getElementById('btn_copy').style.display = 'none'; \n";
 		echo "		document.getElementById('btn_copy_cancel').style.display = 'inline'; \n";
 		echo "		document.getElementById('target_domain_uuid').style.display = 'inline'; \n";
+		echo "		if (typeof window.sync_domain_search_select_visibility === 'function') { window.sync_domain_search_select_visibility('target_domain_uuid'); }\n";
 		echo "		document.getElementById('btn_paste').style.display = 'inline'; \n";
 		echo "	}";
 		echo "	function hide_domains() {\n";
 		echo "		document.getElementById('action').value = '';\n";
 		echo "		document.getElementById('btn_copy_cancel').style.display = 'none'; \n";
 		echo "		document.getElementById('target_domain_uuid').style.display = 'none'; \n";
+		echo "		if (typeof window.sync_domain_search_select_visibility === 'function') { window.sync_domain_search_select_visibility('target_domain_uuid'); }\n";
 		echo "		document.getElementById('target_domain_uuid').selectedIndex = 0;\n";
 		echo "		document.getElementById('btn_paste').style.display = 'none'; \n";
 		echo "		document.getElementById('btn_copy').style.display = 'inline'; \n";
@@ -291,22 +315,20 @@
 	echo "	<div class='heading'><b>".$text['title-default_settings']."</b><div class='count'>".number_format($num_rows)."</div></div>\n";
 	echo "	<div class='actions'>\n";
 	echo button::create(['type'=>'button','label'=>$text['label-domain'],'icon'=>$settings->get('theme', 'button_icon_domain'),'style'=>'','link'=>PROJECT_PATH.'/core/domain_settings/domain_settings.php?id='.$domain_uuid]);
-	echo button::create(['label'=>$text['button-reload'],'icon'=>$settings->get('theme', 'button_icon_reload'),'type'=>'button','id'=>'button_reload','link'=>'default_settings_reload.php'.(!empty($search) ? '?search='.urlencode($search) : ''),'style'=>'margin-right: 15px;']);
-	if ($permission['default_setting_add']) {
-		echo button::create(['type'=>'button','label'=>$text['button-add'],'icon'=>$settings->get('theme', 'button_icon_add'),'id'=>'btn_add','link'=>'default_setting_edit.php?'.$query_string]);
-	}
+	echo button::create(['label'=>$text['button-reload'],'icon'=>$settings->get('theme', 'button_icon_reload'),'type'=>'button','id'=>'button_reload','link'=>'default_settings_reload.php'.($query_string ? '?'.$query_string : '')]);
 	if ($permission['default_setting_add'] && !empty($default_settings)) {
 		if ($permission['domain_select'] && $permission['domain_setting_add']) {
-			echo button::create(['type'=>'button','label'=>$text['button-copy'],'id'=>'btn_copy','name'=>'btn_copy','style'=>'display: none;','icon'=>$settings->get('theme', 'button_icon_copy'),'id'=>'btn_copy','onclick'=>'show_domains();']);
+			echo button::create(['type'=>'button','label'=>$text['button-copy'],'id'=>'btn_copy','name'=>'btn_copy','style'=>'display: none; margin-left: 15px;','icon'=>$settings->get('theme', 'button_icon_copy'),'id'=>'btn_copy','onclick'=>'show_domains();']);
 			echo button::create(['type'=>'button','label'=>$text['button-cancel'],'id'=>'btn_copy_cancel','icon'=>$settings->get('theme', 'button_icon_cancel'),'style'=>'display: none;','onclick'=>'hide_domains();']);
-			echo 		"<select name='domain_uuid' class='formfld' style='display: none; width: auto;' id='target_domain_uuid' onchange=\"document.getElementById('domain_uuid').value = this.options[this.selectedIndex].value;\">\n";
+			echo "		<select name='domain_uuid' class='formfld' style='display: none; width: auto;' id='target_domain_uuid' onchange=\"document.getElementById('domain_uuid').value = this.options[this.selectedIndex].value;\">\n";
 			echo "			<option value=''>(".$text['label-duplicate'].")</option>\n";
 			echo "			<option value='' selected='selected' disabled='disabled'>".$text['label-domain']."...</option>\n";
 			foreach ($_SESSION['domains'] as $domain) {
 				echo "		<option value='".escape($domain["domain_uuid"])."'>".escape($domain["domain_name"])."</option>\n";
 			}
 			echo "		</select>";
-			echo button::create(['type'=>'button','label'=>$text['button-paste'],'icon'=>$settings->get('theme', 'button_icon_paste'),'id'=>'btn_paste','style'=>'display: none;','onclick'=>"if (confirm('".$text['confirm-copy']."')) { list_action_set('copy'); list_form_submit('form_list'); } else { this.blur(); return false; }"]);
+			echo button::create(['type'=>'button','label'=>$text['button-paste'],'icon'=>$settings->get('theme', 'button_icon_paste'),'id'=>'btn_paste','style'=>'display: none;','onclick'=>"modal_open('modal-copy','btn_copy');"]);
+			echo modal::create(['id'=>'modal-copy','type'=>'copy','actions'=>button::create(['type'=>'button','label'=>$text['button-continue'],'icon'=>'check','id'=>'btn_copy','style'=>'float: right; margin-left: 15px;','collapse'=>'never','onclick'=>"modal_close(); list_action_set('copy'); list_form_submit('form_list');"])]);
 		}
 	}
 	if ($permission['default_setting_edit'] && $default_settings) {
@@ -315,27 +337,32 @@
 	if ($permission['default_setting_delete'] && $default_settings) {
 		echo button::create(['type'=>'button','label'=>$text['button-delete'],'icon'=>$settings->get('theme', 'button_icon_delete'),'id'=>'btn_delete','name'=>'btn_delete','style'=>'display: none;','onclick'=>"modal_open('modal-delete','btn_delete');"]);
 	}
-	echo 		"<form id='form_search' class='inline' method='get'>\n";
+	echo "	<form id='form_search' class='inline' method='get'>\n";
+	foreach ($url_params as $key => $value) {
+		if (in_array($key, ['order_by', 'order', 'show'])) {
+			echo "	<input type='hidden' name='".escape($key)."' value='".escape($value)."'>\n";
+		}
+	}
 	if (!empty($categories)) {
-		echo 		"<select name='default_setting_category' class='formfld' style='width: auto; margin-left: 15px;' id='select_category' onchange='this.form.submit();'>\n";
-		echo "			<option value=''>".$text['label-category']."...</option>\n";
-		echo "			<option value=''>".$text['label-all']."</option>\n";
+		echo "	<select name='default_setting_category' class='formfld searchable_select' style='width: auto; margin-left: 15px;' id='select_category' onchange='this.form.submit();'>\n";
+		echo "		<option value=''>".$text['label-category']."...</option>\n";
+		echo "		<option value=''>".$text['label-all']."</option>\n";
 		foreach ($categories as $category_name => $category) {
 			$selected = (!empty($_GET['default_setting_category']) && $_GET['default_setting_category'] == $category_name) ? " selected='selected'" : null;
-			echo "		<option value='".escape($category_name)."' $selected>".escape($category['formatted']).($category['count'] ? " (".$category['count'].")" : null)."</option>\n";
+			echo "	<option value='".escape($category_name)."' $selected>".escape($category['formatted']).($category['count'] ? " (".$category['count'].")" : null)."</option>\n";
 			if ($category['formatted'] == $text['label-custom']) { echo "<option disabled='disabled'></option>\n"; }
 		}
-		echo "			<option disabled='disabled'></option>\n";
-		echo "			<option value=''>".$text['label-all']."</option>\n";
-		echo "		</select>";
+		echo "		<option disabled='disabled'></option>\n";
+		echo "		<option value=''>".$text['label-all']."</option>\n";
+		echo "	</select>";
 	}
-	echo 		"<input type='text' class='txt list-search' name='search' id='search' style='margin-left: 0 !important;' value=\"".escape($search)."\" placeholder=\"".$text['label-search']."\" onkeydown=''>";
+	echo "	<input type='text' class='txt list-search' name='search' id='search' style='margin-left: 0 !important;' value=\"".escape($search)."\" placeholder=\"".$text['label-search']."\" onkeydown=''>";
 	echo button::create(['label'=>$text['button-search'],'icon'=>$settings->get('theme', 'button_icon_search'),'type'=>'submit','id'=>'btn_search']);
 	//echo button::create(['label'=>$text['button-reset'],'icon'=>$settings->get('theme', 'button_icon_reset'),'type'=>'button','id'=>'btn_reset','link'=>'default_settings.php','style'=>($search == '' ? 'display: none;' : null)]);
-	//if (!empty($paging_controls_mini)) {
-	//	echo 	"<span style='margin-left: 15px;'>".$paging_controls_mini."</span>\n";
-	//}
-	echo "		</form>\n";
+	if (!empty($paging_controls_mini)) {
+		echo "	<span style='margin-left: 15px;'>".$paging_controls_mini."</span>\n";
+	}
+	echo "	</form>\n";
 	echo "	</div>\n";
 	echo "	<div style='clear: both;'></div>\n";
 	echo "</div>\n";
@@ -352,7 +379,6 @@
 
 	echo "<form id='form_list' method='post'>\n";
 	echo "<input type='hidden' id='action' name='action' value=''>\n";
-	echo "<input type='hidden' name='search' value=\"".escape($search)."\">\n";
 	echo "<input type='hidden' name='domain_uuid' id='domain_uuid'>";
 
 	if (!empty($default_settings)) {
@@ -429,7 +455,13 @@
 					echo "</div>\n";
 				}
 				echo "<div class='category' id='category_".$default_setting_category."'>\n";
-				echo "<b>".escape($label_default_setting_category)."</b><br>\n";
+
+				echo "<div style='display: flex; justify-content: space-between; padding-bottom: 5px;'>\n";
+				echo "	<b>".escape($label_default_setting_category)."</b><br>\n";
+				if ($permission['default_setting_add']) {
+					echo button::create(['type'=>'button','label'=>$text['button-add'],'icon'=>$settings->get('theme', 'button_icon_add'),'id'=>'btn_add','style'=>'padding: 0 5px;','link'=>'default_setting_edit.php?default_setting_category='.urlencode($default_setting_category)]);
+				}
+				echo "</div>\n";
 
 				echo "<div class='card'>\n";
 				echo "<table class='list'>\n";
@@ -440,12 +472,12 @@
 					echo "	</th>\n";
 				}
 				if ($show == 'all' && $permission['default_setting_all']) {
-					echo th_order_by('domain_name', $text['label-domain'], $order_by, $order);
+					echo th_order_by('domain_name', $text['label-domain'], $order_by, $order, null, null, $query_string);
 				}
-				echo th_order_by('default_setting_subcategory', $text['label-subcategory'], $order_by, $order, null, "class='pct-35'");
-				echo th_order_by('default_setting_name', $text['label-type'], $order_by, $order, null, "class='pct-10 hide-sm-dn'");
-				echo th_order_by('default_setting_value', $text['label-value'], $order_by, $order, null, "class='pct-30'");
-				echo th_order_by('default_setting_enabled', $text['label-enabled'], $order_by, $order, null, "class='center'");
+				echo th_order_by('default_setting_subcategory', $text['label-subcategory'], $order_by, $order, null, "class='pct-35'", $query_string);
+				echo th_order_by('default_setting_name', $text['label-type'], $order_by, $order, null, "class='pct-10 hide-sm-dn'", $query_string);
+				echo th_order_by('default_setting_value', $text['label-value'], $order_by, $order, null, "class='pct-30'", $query_string);
+				echo th_order_by('default_setting_enabled', $text['label-enabled'], $order_by, $order, null, "class='center'", $query_string);
 				echo "	<th class='pct-25 hide-sm-dn'>".$text['label-description']."</th>\n";
 				if ($permission['default_setting_edit'] && $list_row_edit_button) {
 					echo "	<td class='action-button'>&nbsp;</td>\n";
@@ -453,7 +485,7 @@
 				echo "</tr>\n";
 			}
 			if ($permission['default_setting_edit']) {
-				$list_row_url = "default_setting_edit.php?id=".urlencode($row['default_setting_uuid']).'&'.$query_string;
+				$list_row_url = "default_setting_edit.php?id=".urlencode($row['default_setting_uuid']).($query_string ? '&'.$query_string : '');
 			}
 			echo "<tr class='list-row' href='".$list_row_url."'>\n";
 			if ($permission['default_setting_add'] || $permission['default_setting_edit'] || $permission['default_setting_delete']) {
@@ -543,7 +575,7 @@
 					echo "		".$text['option-'.$row['default_setting_value']]."\n";
 				}
 			}
-			else if (substr_count($subcategory, "_color") > 0 && ($name == "text" || $name == 'array')) {
+			else if ((substr_count($subcategory, "_color") > 0 || str_starts_with($row['default_setting_value'] ?? '', "rgb") || str_starts_with($row['default_setting_value'] ?? '', "#")) && ($name == "text" || $name == 'array')) {
 				echo "		".(img_spacer('15px', '15px', 'background: '.escape($row['default_setting_value']).'; margin-right: 4px; vertical-align: middle; border: 1px solid '.(color_adjust($row['default_setting_value'], -0.18)).'; padding: -1px;'));
 				echo "<span style=\"font-family: 'Courier New'; line-height: 6pt;\">".escape($row['default_setting_value'])."</span>\n";
 			}
@@ -613,6 +645,7 @@
 	echo "</table>\n";
 	echo "</div>\n";
 	echo "<br />\n";
+	echo "<div align='center'>".$paging_controls."</div>\n";
 	echo "</div>\n";
 
 	//echo "<div align='center'>".$paging_controls."</div>\n";

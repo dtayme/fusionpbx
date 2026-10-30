@@ -27,19 +27,19 @@
 
 --get the variables
 	if (session:ready()) then
-		domain_name = session:getVariable("domain_name");
-		domain_uuid = session:getVariable("domain_uuid");
-		uuid = session:getVariable("uuid");
-		destination_number = session:getVariable("destination_number");
-		caller_id_name = session:getVariable("caller_id_name");
-		caller_id_number = session:getVariable("caller_id_number");
-		outbound_caller_id_name = session:getVariable("outbound_caller_id_name");
-		outbound_caller_id_number = session:getVariable("outbound_caller_id_number");
-		call_direction = session:getVariable("call_direction");
-		original_destination_number = session:getVariable("destination_number");
-		missed_call_app = session:getVariable("missed_call_app");
-		missed_call_data = session:getVariable("missed_call_data");
-		sip_to_user = session:getVariable("sip_to_user");
+		domain_name = session:getVariable("domain_name") or '';
+		domain_uuid = session:getVariable("domain_uuid") or '';
+		uuid = session:getVariable("uuid") or '';
+		destination_number = session:getVariable("destination_number") or '';
+		caller_id_name = session:getVariable("caller_id_name") or '';
+		caller_id_number = session:getVariable("caller_id_number") or '';
+		outbound_caller_id_name = session:getVariable("outbound_caller_id_name") or '';
+		outbound_caller_id_number = session:getVariable("outbound_caller_id_number") or '';
+		call_direction = session:getVariable("call_direction") or '';
+		original_destination_number = session:getVariable("destination_number") or '';
+		missed_call_app = session:getVariable("missed_call_app") or '';
+		missed_call_data = session:getVariable("missed_call_data") or '';
+		sip_to_user = session:getVariable("sip_to_user") or '';
 		dialed_user = session:getVariable("dialed_user") or '';
 		verto_enabled = session:getVariable("verto_enabled") or '';
 	end
@@ -66,6 +66,9 @@
 --set the strategy
 	local settings = Settings.new(dbh, domain_name, domain_uuid);
 	local follow_me_strategy = settings:get('follow_me', 'strategy', 'text') or 'enterprise'; --simultaneous, enterprise
+
+--get the bridge type for external numbers (loopback or bridge)
+	local external_route = settings:get('follow_me', 'external_route', 'text') or 'loopback';
 
 --include json library
 	debug["sql"] = false;
@@ -306,7 +309,7 @@
 --get the dialplan data and save it to a table
 	if (external == "true") then
 		dialplans = route_to_bridge.preload_dialplan(
-			dbh, domain_uuid, {hostname = hostname, context = context}
+			dbh, domain_uuid, {context = context}
 		)
 	end
 
@@ -452,7 +455,27 @@
 				dial_string = "[sip_invite_domain="..domain_name..",call_direction="..call_direction..","..group_confirm..","..timeout_name.."="..destination_timeout..","..delay_name.."="..destination_delay.."]" .. row.destination_number;
 			else
 				--external number
-					route_bridge = 'loopback/'..destination_number;
+					--set the bridge to use for the external number
+						route_bridge = 'loopback/'..destination_number;
+						route_actions = '';
+						if (external_route == 'bridge') then
+							--route the external number through the outbound routes (route_to_bridge)
+								local fields = {
+									context = context,
+									destination_number = destination_number,
+									caller_id_number = caller_id_number,
+									__api__ = api,
+								}
+								local route = route_to_bridge(dialplans or dbh, domain_uuid, fields)
+								if (route and route.bridge) then
+									--use the bridge from the outbound route
+										route_bridge = route.bridge;
+									--collect the set/export actions from the outbound route
+										for _, action in ipairs(route) do
+											route_actions = route_actions .. action .. ",";
+										end
+								end
+						end
 					if (extension_toll_allow ~= nil) then
 						toll_allow = extension_toll_allow:gsub(",", ":");
 					end
@@ -496,7 +519,7 @@
 				--set the destination dial string
 					-- have to double destination_delay here due a FS bug requiring a 50% delay value for internal extensions, but not external calls. 
 					--destination_delay = destination_delay * 2;
-					dial_string = "[toll_allow=".. toll_allow ..",accountcode="..accountcode..",".. caller_id ..",sip_invite_domain="..domain_name..",domain_name="..domain_name..",domain_uuid="..domain_uuid..",call_direction="..call_direction..","..group_confirm..","..timeout_name.."="..destination_timeout..","..delay_name.."="..destination_delay.."]"..route_bridge
+					dial_string = "["..route_actions.."toll_allow=".. toll_allow ..",accountcode="..accountcode..",".. caller_id ..",sip_invite_domain="..domain_name..",domain_name="..domain_name..",domain_uuid="..domain_uuid..",call_direction="..call_direction..","..group_confirm..","..timeout_name.."="..destination_timeout..","..delay_name.."="..destination_delay.."]"..route_bridge
 			end
 
 		--add a delimiter between destinations
@@ -542,8 +565,16 @@
 		--execute the bridge
 			if (app_data ~= nil) then
 				if (follow_me_strategy == "enterprise") then
-					app_data = app_data:gsub("%[", "{");
-					app_data = app_data:gsub("%]", "}");
+					app_data = app_data:gsub("(%b[])", function(segment)
+						-- preserve IPv6 literals only
+						if segment:match("^%[[0-9A-Fa-f:]+%]$") and segment:match(":") then
+							return segment
+						end
+						-- convert enterprise variable blocks
+						segment = segment:gsub("^%[", "{")
+						segment = segment:gsub("%]$", "}")
+						return segment
+					end)
 				end
 				freeswitch.consoleLog("NOTICE", "[follow me] app_data: "..app_data.."\n");
 				session:execute("bridge", app_data);
